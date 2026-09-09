@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wijk Racer</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #9fdcff; font-family: system-ui, sans-serif; }
+    canvas { display: block; }
+    #hud { position: fixed; inset: auto 24px 20px 24px; display: flex; justify-content: space-between; align-items: flex-end; pointer-events: none; color: #fff; text-shadow: 0 2px 6px rgba(0, 0, 0, .6); }
+    #street { font-size: 28px; font-weight: 600; }
+    #speed { font-size: 56px; font-weight: 800; line-height: 1; }
+    #speed small { font-size: 18px; margin-left: 6px; }
+    #hint { position: fixed; top: 16px; left: 24px; color: #fff; text-shadow: 0 1px 4px rgba(0, 0, 0, .6); font-size: 14px; opacity: .85; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="hint">Pijltjes of WASD · Shift = handrem</div>
+  <div id="hud">
+    <div id="street"></div>
+    <div id="speed">0<small>km/h</small></div>
+  </div>
+  <script type="module" src="game.js"></script>
+</body>
+</html>

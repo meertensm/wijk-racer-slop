@@ -1,0 +1,115 @@
+#!/usr/bin/env ruby
+require 'json'
+require 'net/http'
+
+name, south, west, north, east, start_street = ARGV
+abort 'usage: bin/generate NAME SOUTH WEST NORTH EAST [START_STREET]' unless east
+
+bbox = [south, west, north, east].map(&:to_f)
+lat0 = (bbox[0] + bbox[2]) / 2
+lng0 = (bbox[1] + bbox[3]) / 2
+
+HEIGHTS = { 'house' => 6, 'detached' => 6, 'semidetached_house' => 6, 'terrace' => 6, 'residential' => 7,
+            'apartments' => 12, 'retail' => 5, 'commercial' => 6, 'industrial' => 8, 'warehouse' => 8,
+            'shed' => 2.5, 'garage' => 2.8, 'garages' => 2.8, 'church' => 15, 'school' => 5, 'static_caravan' => 3 }
+ROOFED  = %w[house detached semidetached_house terrace residential yes farm]
+WIDTHS  = { 'motorway' => 12, 'motorway_link' => 6, 'trunk' => 10, 'trunk_link' => 6, 'primary' => 9, 'primary_link' => 6,
+            'secondary' => 8, 'secondary_link' => 6, 'tertiary' => 7, 'residential' => 6, 'unclassified' => 6,
+            'living_street' => 5, 'pedestrian' => 5, 'service' => 4, 'track' => 3, 'cycleway' => 2.5, 'footway' => 2, 'path' => 1.5 }
+PATHS   = %w[track cycleway footway path]
+
+def project(pt, lat0, lng0)
+  [((pt['lon'] - lng0) * 111_320 * Math.cos(lat0 * Math::PI / 180)).round(1),
+   (-(pt['lat'] - lat0) * 110_540).round(1)]
+end
+
+def inside?(poly, x, z)
+  hit = false
+  poly.each_with_index do |(ax, az), i|
+    bx, bz = poly[i - 1]
+    hit = !hit if (az > z) != (bz > z) && x < (bx - ax) * (z - az) / (bz - az) + ax
+  end
+  hit
+end
+
+def scatter(poly, id, density)
+  xs, zs = poly.transpose
+  area   = (xs.max - xs.min) * (zs.max - zs.min)
+  random = Random.new(id)
+  Array.new([(area / density).to_i, 400].min) { [random.rand(xs.min..xs.max), random.rand(zs.min..zs.max)] }
+       .select { |x, z| inside?(poly, x, z) }
+       .map { |x, z| [x.round(1), z.round(1)] }
+end
+
+area = bbox.join(',')
+query = <<~QL
+  [out:json][timeout:90];
+  (
+    way["building"](#{area});
+    way["highway"](#{area});
+    node["natural"="tree"](#{area});
+    way["natural"~"^(water|wood|scrub)$"](#{area});
+    way["landuse"~"^(grass|forest|farmland|meadow|orchard|allotments)$"](#{area});
+    way["leisure"~"^(park|pitch|playground|garden)$"](#{area});
+    way["waterway"~"^(river|canal|stream)$"](#{area});
+  );
+  out geom;
+QL
+
+warn "Fetching #{name} from Overpass..."
+response = Net::HTTP.post_form(URI('https://overpass-api.de/api/interpreter'), data: query)
+elements = JSON.parse(response.body.force_encoding('UTF-8'))['elements']
+
+buildings, roads, areas, trees = [], [], [], []
+
+elements.each do |element|
+  tags = element['tags'] || {}
+
+  if element['type'] == 'node'
+    trees << project(element, lat0, lng0)
+    next
+  end
+
+  points = element['geometry'].map { |pt| project(pt, lat0, lng0) }
+  closed = points.first == points.last
+  points.pop if closed
+  points = points.chunk_while { |a, b| a == b }.map(&:first)
+  next if points.size < 2
+
+  if tags['building'] && points.size >= 3
+    type   = tags['building']
+    levels = tags['building:levels']&.to_f
+    height = tags['height']&.to_f || (levels ? levels * 3 : HEIGHTS.fetch(type, 6))
+    buildings << { p: points, h: height.round(1), c: element['id'] % 6,
+                   roof: ROOFED.include?(type) && height <= 9 ? 'hip' : 'flat' }
+  elsif tags['highway'] && WIDTHS[tags['highway']]
+    roads << { p: points, w: WIDTHS[tags['highway']], kind: PATHS.include?(tags['highway']) ? 'path' : 'road',
+               name: tags['name'] }.compact
+  elsif tags['waterway']
+    roads << { p: points, w: tags['waterway'] == 'stream' ? 3 : 10, kind: 'water' }
+  elsif closed && points.size >= 3
+    kind = if tags['natural'] == 'water' then 'water'
+           elsif tags['natural'] == 'wood' || tags['landuse'] == 'forest' then 'forest'
+           elsif %w[farmland orchard allotments].include?(tags['landuse']) then 'field'
+           else 'grass'
+           end
+    areas << { p: points, kind: kind }
+    trees.concat scatter(points, element['id'], 150) if kind == 'forest'
+    trees.concat scatter(points, element['id'], 1200) if kind == 'grass'
+  end
+end
+
+start = { x: 0, z: 0, heading: 0 }
+if start_street
+  street = roads.select { |r| r[:name] == start_street }.max_by { |r| r[:p].size }
+  abort "Street #{start_street} not found" unless street
+  a, b = street[:p][street[:p].size / 2 - 1, 2]
+  start = { x: ((a[0] + b[0]) / 2).round(1), z: ((a[1] + b[1]) / 2).round(1), heading: Math.atan2(b[0] - a[0], b[1] - a[1]).round(3) }
+end
+
+corners = [[bbox[0], bbox[1]], [bbox[2], bbox[3]]].map { |lat, lon| project({ 'lat' => lat, 'lon' => lon }, lat0, lng0) }
+world = { name: name, center: [lat0, lng0], bounds: [corners[0][0], corners[1][1], corners[1][0], corners[0][1]],
+          start: start, buildings: buildings, roads: roads, areas: areas, trees: trees }
+
+File.write("worlds/#{name}.json", JSON.generate(world))
+warn "#{buildings.size} buildings, #{roads.size} roads, #{areas.size} areas, #{trees.size} trees -> worlds/#{name}.json"
