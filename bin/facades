@@ -1,0 +1,125 @@
+#!/usr/bin/env ruby
+require 'json'
+require 'net/http'
+require 'fileutils'
+
+name, radius = ARGV
+abort 'usage: bin/facades NAME [RADIUS]' unless name
+
+COLUMNS   = 16
+CELL      = [256, 160]
+MAX_CELLS = 800
+HEADERS   = { 'User-Agent' => 'Mozilla/5.0' }
+
+world      = JSON.parse(File.read("worlds/#{name}.json", encoding: 'UTF-8'))
+lat0, lng0 = world['center']
+start      = world['start']
+directory  = "worlds/#{name}/facades"
+FileUtils.mkdir_p directory
+
+segments = world['roads'].select { |road| road['kind'] == 'road' }.flat_map { |road| road['p'].each_cons(2).to_a }
+panos    = {}
+
+def unproject(x, z, lat0, lng0)
+  [lat0 - z / 110_540.0, lng0 + x / (111_320.0 * Math.cos(lat0 * Math::PI / 180))]
+end
+
+def project(lat, lng, lat0, lng0)
+  [(lng - lng0) * 111_320 * Math.cos(lat0 * Math::PI / 180), -(lat - lat0) * 110_540]
+end
+
+def inside?(poly, x, z)
+  hit = false
+  poly.each_with_index do |(ax, az), i|
+    bx, bz = poly[i - 1]
+    hit = !hit if (az > z) != (bz > z) && x < (bx - ax) * (z - az) / (bz - az) + ax
+  end
+  hit
+end
+
+def nearest_road_point(segments, x, z)
+  best = nil
+  segments.each do |(ax, az), (bx, bz)|
+    abx, abz = bx - ax, bz - az
+    length = abx * abx + abz * abz
+    t = length.zero? ? 0 : (((x - ax) * abx + (z - az) * abz) / length).clamp(0, 1)
+    px, pz = ax + abx * t, az + abz * t
+    distance = Math.hypot(px - x, pz - z)
+    best = [px, pz, distance] if best.nil? || distance < best[2]
+  end
+  best
+end
+
+def find_pano(lat, lng)
+  pb  = "!1m5!1sapiv3!5sUS!11m2!1m1!1b0!2m4!1m2!3d#{lat}!4d#{lng}!2d50!3m10!2m2!1snl!2sNL!9m1!1e2!11m4!1m3!1e2!2b1!3e2!4m10!1e1!1e2!1e3!1e4!1e8!1e6!5m1!1e2!6m1!1e2"
+  body = Net::HTTP.get_response(URI("https://maps.googleapis.com/maps/api/js/GeoPhotoService.SingleImageSearch?pb=#{pb}&callback=cb"), HEADERS).body
+  id   = body[/\[2,"([\w-]{22})"\]/, 1]
+  pos  = body.match(/\[null,null,(-?\d+\.\d+),(-?\d+\.\d+)\]/)
+  { id: id, lat: pos[1].to_f, lng: pos[2].to_f } if id && pos
+end
+
+def fetch_thumbnail(pano, yaw, pitch, fov, path)
+  return if File.exist?(path)
+
+  url = "https://streetviewpixels-pa.googleapis.com/v1/thumbnail?cb_client=maps_sv.tactile&w=512&h=320&pitch=#{pitch}&thumbfov=#{fov}&panoid=#{pano[:id]}&yaw=#{yaw}"
+  response = Net::HTTP.get_response(URI(url), HEADERS)
+  File.binwrite(path, response.body) if response.code == '200'
+  sleep 0.25
+end
+
+facades = []
+
+world['buildings'].each_with_index do |building, index|
+  points = building['p']
+  cx = points.sum { |p| p[0] } / points.size
+  cz = points.sum { |p| p[1] } / points.size
+  next if radius && Math.hypot(cx - start['x'], cz - start['z']) > radius.to_f
+
+  points.each_with_index do |(ax, az), edge|
+    break if facades.size >= MAX_CELLS
+
+    bx, bz = points[(edge + 1) % points.size]
+    length = Math.hypot(bx - ax, bz - az)
+    next if length < 3
+
+    mx, mz = (ax + bx) / 2, (az + bz) / 2
+    nx, nz = (bz - az) / length, -(bx - ax) / length
+    nx, nz = -nx, -nz if inside?(points, mx + nx * 0.5, mz + nz * 0.5)
+
+    px, pz, distance = nearest_road_point(segments, mx, mz)
+    next if distance > 25 || (px - mx) * nx + (pz - mz) * nz <= 0
+
+    lat, lng = unproject(px, pz, lat0, lng0)
+    pano = panos[[lat.round(4), lng.round(4)]] ||= find_pano(lat, lng)
+    next unless pano
+
+    sx, sz = project(pano[:lat], pano[:lng], lat0, lng0)
+    range  = Math.hypot(mx - sx, mz - sz)
+    next if range < 2 || range > 40
+
+    yaw   = (Math.atan2(mx - sx, -(mz - sz)) * 180 / Math::PI).round(1) % 360
+    fov   = (2 * Math.atan2(length / 2, range) * 180 / Math::PI * 1.15).clamp(25, 110).round
+    pitch = (Math.atan((building['h'] / 2.0 - 2.5) / range) * 180 / Math::PI).clamp(0, 25).round
+
+    path = "#{directory}/#{index}-#{edge}.jpg"
+    fetch_thumbnail(pano, yaw, pitch, fov, path)
+    next unless File.exist?(path)
+
+    facades << { 'b' => index, 'e' => edge, 'cell' => facades.size + 1 }
+    warn "#{facades.size} facades" if facades.size % 25 == 0
+  end
+end
+
+rows  = ((facades.size + 1).to_f / COLUMNS).ceil
+white = "#{directory}/white.png"
+system('magick', '-size', CELL.join('x'), 'xc:white', white) unless File.exist?(white)
+tiles = [white, *facades.map { |f| "#{directory}/#{f['b']}-#{f['e']}.jpg" }].each_slice(COLUMNS).flat_map do |row|
+  ['(', *row, '-resize', "#{CELL.join('x')}!", '+append',
+   '-background', 'white', '-gravity', 'NorthWest', '-extent', "#{COLUMNS * CELL[0]}x#{CELL[1]}", ')']
+end
+system('magick', *tiles, '-append', '-quality', '85', "worlds/#{name}.atlas.jpg") || abort('atlas failed')
+
+world['facades'] = facades
+world['atlas']   = { 'file' => "#{name}.atlas.jpg", 'columns' => COLUMNS, 'rows' => rows, 'cell' => CELL }
+File.write("worlds/#{name}.json", JSON.generate(world))
+warn "#{facades.size} facades in #{rows} rows -> worlds/#{name}.atlas.jpg"

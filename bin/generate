@@ -101,10 +101,23 @@ end
 
 start = { x: 0, z: 0, heading: 0 }
 if start_street
-  street = roads.select { |r| r[:name] == start_street }.max_by { |r| r[:p].size }
-  abort "Street #{start_street} not found" unless street
-  a, b = street[:p][street[:p].size / 2 - 1, 2]
-  start = { x: ((a[0] + b[0]) / 2).round(1), z: ((a[1] + b[1]) / 2).round(1), heading: Math.atan2(b[0] - a[0], b[1] - a[1]).round(3) }
+  cross, along = start_street.split(/ x /i, 2)
+  along ||= cross
+  streets = roads.select { |r| r[:name] == along }
+  abort "Street #{along} not found" if streets.empty?
+
+  if cross == along
+    street = streets.max_by { |r| r[:p].size }
+    a, b   = street[:p][street[:p].size / 2 - 1, 2]
+    a      = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
+  else
+    node   = roads.select { |r| r[:name] == cross }.flat_map { |r| r[:p] } & streets.flat_map { |r| r[:p] }
+    abort "No intersection of #{cross} and #{along}" if node.empty?
+    street = streets.find { |r| r[:p].include?(node.first) }
+    index  = street[:p].index(node.first)
+    a, b   = node.first, street[:p][index + 1] || street[:p][index - 1]
+  end
+  start = { x: a[0].round(1), z: a[1].round(1), heading: Math.atan2(b[0] - a[0], b[1] - a[1]).round(3) }
 end
 
 corners = [[bbox[0], bbox[1]], [bbox[2], bbox[3]]].map { |lat, lon| project({ 'lat' => lat, 'lon' => lon }, lat0, lng0) }

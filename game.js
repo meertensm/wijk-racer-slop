@@ -19,7 +19,8 @@ const COLORS = {
 }
 
 const CELL = 40
-const CAR = { length: 4.2, width: 1.9 }
+const CAR = { length: 3.4, width: 1.5 }
+const PANDA = { topSpeed: 34, reverseSpeed: 4, acceleration: 3.4, braking: 7, wheelbase: 2.16, steeringLock: 0.55, grip: 9 }
 
 const scene = new THREE.Scene()
 scene.background = new THREE.Color(COLORS.sky)
@@ -37,10 +38,16 @@ const sun = new THREE.DirectionalLight(0xffffff, 1.5)
 sun.position.set(300, 500, 200)
 scene.add(sun)
 
+const atlas = world.atlas && await new THREE.TextureLoader().loadAsync(`worlds/${world.atlas.file}`).catch(() => null)
+if (atlas) {
+  atlas.colorSpace = THREE.SRGBColorSpace
+  atlas.anisotropy = renderer.capabilities.getMaxAnisotropy()
+}
+
 const gradient = new THREE.DataTexture(new Uint8Array([110, 110, 110, 255, 185, 185, 185, 255, 255, 255, 255, 255]), 3, 1)
 gradient.minFilter = gradient.magFilter = THREE.NearestFilter
 gradient.needsUpdate = true
-const toon = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: gradient, side: THREE.DoubleSide })
+const toon = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: gradient, side: THREE.DoubleSide, map: atlas || null })
 const solid = color => new THREE.MeshToonMaterial({ color, gradientMap: gradient })
 
 function paint(geometry, color) {
@@ -49,6 +56,40 @@ function paint(geometry, color) {
   for (let i = 0; i < count; i++) colors.set([color.r, color.g, color.b], i * 3)
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
   return geometry
+}
+
+function uvFill(geometry, u, v) {
+  const count = geometry.attributes.position.count
+  const uvs = new Float32Array(count * 2)
+  for (let i = 0; i < count; i++) uvs.set([u, v], i * 2)
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+  return geometry
+}
+
+function cellUv(cell) {
+  const { columns, rows, cell: [width, height] } = world.atlas
+  const column = cell % columns, row = Math.floor(cell / columns)
+  const pad = 2
+  return { u0: (column * width + pad) / (columns * width), u1: ((column + 1) * width - pad) / (columns * width),
+           v0: 1 - ((row + 1) * height - pad) / (rows * height), v1: 1 - (row * height + pad) / (rows * height) }
+}
+
+function facadeQuad(facade) {
+  const building = world.buildings[facade.b]
+  const A = building.p[facade.e], B = building.p[(facade.e + 1) % building.p.length]
+  const length = Math.hypot(B[0] - A[0], B[1] - A[1])
+  let nx = (B[1] - A[1]) / length, nz = -(B[0] - A[0]) / length
+  const mx = (A[0] + B[0]) / 2, mz = (A[1] + B[1]) / 2
+  if (inside(building.p, mx + nx * 0.5, mz + nz * 0.5)) { nx = -nx; nz = -nz }
+  const [L, R] = (B[0] - A[0]) * nz - (B[1] - A[1]) * nx > 0 ? [A, B] : [B, A]
+  const lx = L[0] + nx * 0.05, lz = L[1] + nz * 0.05, rx = R[0] + nx * 0.05, rz = R[1] + nz * 0.05
+  const h = building.h
+  const { u0, u1, v0, v1 } = cellUv(facade.cell)
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([lx, 0, lz, rx, 0, rz, rx, h, rz, lx, 0, lz, rx, h, rz, lx, h, lz], 3))
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute([u0, v0, u1, v0, u1, v1, u0, v0, u1, v1, u0, v1], 2))
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(Array(6).fill([nx, 0, nz]).flat(), 3))
+  return paint(geometry, new THREE.Color(0xffffff))
 }
 
 function flat(points, y) {
@@ -117,7 +158,14 @@ function buildWorld() {
     if (building.roof === 'hip') parts.push(paint(hipRoof(building), COLORS.roofs[building.c]))
   })
 
-  scene.add(new THREE.Mesh(mergeGeometries(parts.map(part => { part.deleteAttribute('uv'); return part.index ? part.toNonIndexed() : part })), toon))
+  const white = atlas && cellUv(0)
+  const geometries = parts.map(part => {
+    part.deleteAttribute('uv')
+    const geometry = part.index ? part.toNonIndexed() : part
+    return white ? uvFill(geometry, (white.u0 + white.u1) / 2, (white.v0 + white.v1) / 2) : geometry
+  })
+  if (atlas) (world.facades || []).forEach(facade => geometries.push(facadeQuad(facade)))
+  scene.add(new THREE.Mesh(mergeGeometries(geometries), toon))
 
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000).rotateX(-Math.PI / 2), solid(COLORS.ground))
   scene.add(ground)
@@ -140,23 +188,41 @@ function buildTrees() {
 
 function buildCar() {
   const car = new THREE.Group()
-  const body = new THREE.Mesh(new THREE.BoxGeometry(CAR.width - 0.1, 0.6, CAR.length), solid(0xd32f2f))
-  body.position.y = 0.6
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(CAR.width - 0.4, 0.55, 1.9), solid(0x263238))
-  cabin.position.set(0, 1.15, -0.2)
-  car.add(body, cabin)
-  const wheel = new THREE.CylinderGeometry(0.38, 0.38, 0.3, 12).rotateZ(Math.PI / 2)
-  for (const [x, z] of [[-0.9, 1.3], [0.9, 1.3], [-0.9, -1.3], [0.9, -1.3]]) {
-    const mesh = new THREE.Mesh(wheel, solid(0x111111))
-    mesh.position.set(x, 0.38, z)
+  const part = (w, h, d, color, x, y, z) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), solid(color))
+    mesh.position.set(x, y, z)
     car.add(mesh)
+    return mesh
   }
-  for (const x of [-0.6, 0.6]) {
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.2, 0.1), solid(0xfff59d))
-    head.position.set(x, 0.65, CAR.length / 2)
-    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.2, 0.1), solid(0xff1744))
-    tail.position.set(x, 0.65, -CAR.length / 2)
-    car.add(head, tail)
+  const body = 0xefe6cf, glass = 0x2b3a4a, plastic = 0x3a3a3a
+
+  part(1.46, 0.5, 3.38, body, 0, 0.6, 0)
+  part(1.42, 0.6, 2.4, body, 0, 1.15, -0.45)
+  part(1.48, 0.14, 3.42, plastic, 0, 0.42, 0)
+  part(1.5, 0.12, 0.12, plastic, 0, 0.45, 1.72)
+  part(1.5, 0.12, 0.12, plastic, 0, 0.45, -1.72)
+
+  for (const side of [-1, 1]) {
+    part(0.02, 0.4, 0.9, glass, side * 0.72, 1.2, 0.2)
+    part(0.02, 0.4, 0.95, glass, side * 0.72, 1.2, -0.9)
+  }
+  part(1.3, 0.42, 0.02, glass, 0, 1.2, -1.66)
+  part(1.3, 0.5, 0.02, glass, 0, 1.17, 0.7).rotation.x = -0.4
+
+  for (const x of [-0.5, 0.5]) {
+    part(0.34, 0.16, 0.04, 0xfff3c4, x, 0.72, 1.7)
+    part(0.12, 0.3, 0.04, 0xd32f2f, x * 1.3, 0.68, -1.7)
+  }
+  part(0.5, 0.14, 0.04, 0x222222, 0, 0.72, 1.7)
+
+  const tyre = new THREE.CylinderGeometry(0.28, 0.28, 0.16, 12).rotateZ(Math.PI / 2)
+  const cap = new THREE.CylinderGeometry(0.16, 0.16, 0.17, 10).rotateZ(Math.PI / 2)
+  for (const [x, z] of [[-0.66, 1.08], [0.66, 1.08], [-0.66, -1.08], [0.66, -1.08]]) {
+    for (const [geometry, color] of [[tyre, 0x111111], [cap, 0xbdbdbd]]) {
+      const mesh = new THREE.Mesh(geometry, solid(color))
+      mesh.position.set(x, 0.28, z)
+      car.add(mesh)
+    }
   }
   scene.add(car)
   return car
@@ -249,12 +315,16 @@ function step(dt) {
   const handbrake = keys.has('ShiftLeft') || keys.has('ShiftRight')
   const steer = (keys.has('ArrowRight') || keys.has('KeyD')) - (keys.has('ArrowLeft') || keys.has('KeyA'))
 
-  if (gas) state.speed = Math.min(state.speed + 9 * dt, 30)
-  else if (brake) state.speed = Math.max(state.speed - 18 * dt, -8)
-  else state.speed -= Math.sign(state.speed) * Math.min(Math.abs(state.speed), (4 + Math.abs(state.speed) * 0.15) * dt)
-  if (handbrake) state.speed -= Math.sign(state.speed) * Math.min(Math.abs(state.speed), 25 * dt)
+  const speed = Math.abs(state.speed)
+  if (gas && state.speed >= 0) state.speed = Math.min(state.speed + PANDA.acceleration * (1 - speed / PANDA.topSpeed) * dt, PANDA.topSpeed)
+  else if (gas) state.speed = Math.min(state.speed + PANDA.braking * dt, 0)
+  else if (brake && state.speed > 0) state.speed = Math.max(state.speed - PANDA.braking * dt, 0)
+  else if (brake) state.speed = Math.max(state.speed - PANDA.acceleration * 0.5 * dt, -PANDA.reverseSpeed)
+  else state.speed -= Math.sign(state.speed) * Math.min(speed, (0.6 + speed * 0.04) * dt)
+  if (handbrake) state.speed -= Math.sign(state.speed) * Math.min(speed, 6 * dt)
 
-  state.heading -= steer * 2.2 * Math.tanh(state.speed / 7) * dt
+  const yawRate = Math.min(speed * Math.tan(PANDA.steeringLock) / PANDA.wheelbase, PANDA.grip / Math.max(speed, 0.1))
+  state.heading -= steer * yawRate * Math.sign(state.speed) * dt
 
   const x = state.x + Math.sin(state.heading) * state.speed * dt
   const z = state.z + Math.cos(state.heading) * state.speed * dt
@@ -279,7 +349,7 @@ function step(dt) {
   camera.lookAt(state.x, 1.2, state.z)
   state.shake *= 0.85
 
-  speedEl.innerHTML = `${Math.round(Math.abs(state.speed) * 3.6)}<small>km/h</small>`
+  speedEl.innerHTML = `${Math.round(Math.abs(state.speed) * 3.6)}<small>km/u</small>`
   streetTimer -= dt
   if (streetTimer < 0) {
     streetTimer = 0.25
