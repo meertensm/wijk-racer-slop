@@ -2444,7 +2444,7 @@ function send(message) {
 function connectMultiplayer() {
   localStorage.setItem('playerName', myName())
   try {
-    socket = new WebSocket(`ws://${location.hostname}:${Number(location.port || 80) + 1}`)
+    socket = new WebSocket(`ws://${location.host}`)
   } catch { return }
   socket.onmessage = ({ data }) => {
     const message = JSON.parse(data)
