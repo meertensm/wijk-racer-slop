@@ -36,7 +36,10 @@ class Npc < Entity
   end
 
   def tick(dt, game)
-    return if dead
+    if dead
+      revive if game.now - dead_at > 600 && !game.nearest_player(x, z, 300)
+      return
+    end
     @timer -= dt
     decide(game) if @timer.negative?
     move(dt)
@@ -73,6 +76,13 @@ class Npc < Entity
     @speed   = 0.0
     touch
     game.kill(self, player)
+  end
+
+  def revive
+    @dead   = false
+    @x, @z  = home
+    @timer  = 0.0
+    touch
   end
 
   def push(dx, dz)

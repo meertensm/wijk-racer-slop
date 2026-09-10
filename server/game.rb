@@ -36,6 +36,12 @@ class Game
     events << ['score', player.id, 0]
   end
 
+  def award(player, amount, npc, stage)
+    scores.award(player.name, amount)
+    events << ['combo', npc.id, player.id, stage]
+    events << ['score', player.id, scores[player.name]]
+  end
+
   def drop_poop(x, z)
     poop = Poop.new((@poop_id = (@poop_id || 0) + 1), x, z, now)
     poops << poop
@@ -62,6 +68,7 @@ class Game
     handle(*inbox.pop) until inbox.empty?
     npcs.each { |npc| npc.tick(dt, self) if active?(npc) }
     respawn_players
+    players.values.each { |player| leave(player.client) && player.client.close if now - player.last_seen > 10 }
     scores.flush(now)
     @net += dt
     return if @net < NET
@@ -110,6 +117,7 @@ class Game
     return if !player.alive? || Math.hypot(x - from[0], z - from[1]) > 30
     poops.reject! { |poop| poop.near?(player.car.x, player.car.z, 1.4) && events << ['unpoop', poop.id, player.id] }
     npcs.each do |npc|
+      npc.combo(player, self) if npc.dead && npc.is_a?(DogWalker) && npc.near?(x, z, 10)
       next if npc.dead || !npc.near?(x, z, 40)
       next if Geometry.segment_distance(npc.x, npc.z, from[0], from[1], player.car.x, player.car.z) > 2.2
       npc.hit_by(player, self)
@@ -135,7 +143,7 @@ class Game
     rows, gone = [], []
     npcs.each do |npc|
       if player.car.near?(npc.x, npc.z, RANGE)
-        rows << npc.to_row if !npc.speed.zero? || player.known[npc.id] != npc.version
+        rows << npc.to_row if player.known[npc.id] != npc.version
         player.known[npc.id] = npc.version
       elsif player.known.key?(npc.id) && !player.car.near?(npc.x, npc.z, DROP)
         gone << npc.id

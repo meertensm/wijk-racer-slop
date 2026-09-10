@@ -1446,7 +1446,7 @@ function updateNpcs(dt, now) {
   npcs.forEach(npc => {
     if (npc.predictedAt && perf - npc.predictedAt > 500) unpredict(npc)
     if (!npc.dead) {
-      const ahead = Math.min((perf - npc.at) / 1000, 0.3) * npc.speed
+      const ahead = Math.min((perf - npc.at) / 1000, 8) * npc.speed
       const gx = npc.tx + Math.sin(npc.th) * ahead, gz = npc.tz + Math.cos(npc.th) * ahead
       const k = Math.min(1, dt * 10)
       npc.x += (gx - npc.x) * k

@@ -15,6 +15,19 @@ class DogWalker < HumanoidNpc
 
   def die(player, game)
     super
+    @stage  = 0
+    @on_top = { player.id => true }
     dog&.panic!
+  end
+
+  def combo(player, game)
+    return if @stage >= 2
+    return @on_top.delete(player.id) unless near?(player.car.x, player.car.z, 1.8)
+    return if @on_top[player.id] || game.now - dead_at > 5
+    return unless @stage.zero? ? player.car.speed < -0.5 : player.car.speed > 0.5
+    @on_top[player.id] = true
+    @stage  += 1
+    @dead_at = game.now
+    game.award(player, 0.5, self, @stage)
   end
 end
