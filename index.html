@@ -22,7 +22,13 @@
 #travel-list li:hover { background: rgba(255, 255, 255, .12); }
 #travel-list small { opacity: .6; }
     #coins { position: fixed; top: 44px; left: 24px; color: #ffd166; font: 700 22px system-ui, sans-serif; text-shadow: 0 2px 6px rgba(0, 0, 0, .6); }
-    #coins img { width: 34px; height: 34px; border-radius: 50%; border: 2px solid #ffd166; vertical-align: middle; margin-right: 4px; object-fit: cover; }
+    #coins img { width: 34px; height: 34px; border-radius: 50%; border: 2px solid #ffd166; vertical-align: middle; margin-right: 4px; object-fit: cover; filter: sepia(1) saturate(4) hue-rotate(-8deg) brightness(1.05); }
+    #players { position: fixed; top: 92px; left: 24px; color: #fff; font: 600 15px/1.5 system-ui, sans-serif; text-shadow: 0 1px 4px rgba(0, 0, 0, .7); }
+    #players .me { color: #ffd166; }
+    #bigmap[hidden] { display: none; }
+#bigmap { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); border-radius: 12px; box-shadow: 0 12px 48px rgba(0, 0, 0, .6); z-index: 9; }
+    #loading-name { position: absolute; right: 0; top: -60px; font: 14px system-ui, sans-serif; opacity: .9; }
+    #loading-name input { margin-left: 8px; padding: 6px 10px; border: 0; border-radius: 6px; font: 15px system-ui, sans-serif; width: 160px; }
     #coins.bump { animation: bump .4s; }
     @keyframes bump { 40% { transform: scale(1.35); } }
     #townsign { position: fixed; top: 18%; left: 50%; transform: translateX(-50%); padding: 14px 36px; border: 5px solid #fff; outline: 3px solid #0d4fa0; border-radius: 6px; background: #0d4fa0; color: #fff; font: 700 44px/1 system-ui, sans-serif; letter-spacing: .02em; text-transform: uppercase; opacity: 0; pointer-events: none; }
@@ -65,11 +71,14 @@
     <div id="loading-bar"><i></i></div>
     <small id="loading-phase">Laden…</small>
     <small id="loading-music">Druk op een toets voor muziek</small>
+    <label id="loading-name">Naam <input id="player-name" maxlength="16" autocomplete="off"></label>
     <small id="loading-credits"></small>
   </div>
 </div>
 <div id="hint">Pijltjes of WASD · Shift = handrem · T = fast travel</div>
 <div id="coins"><img src="assets/gcoin.jpg" alt=""> <span>0</span> G-Points</div>
+<div id="players"></div>
+<canvas id="bigmap" hidden></canvas>
 <div id="townsign"></div>
 <div id="travel" hidden>
   <h2>Fast travel</h2>

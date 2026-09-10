@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import sys
+import base64, hashlib, json, os, socket, struct, sys, threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 class Handler(SimpleHTTPRequestHandler):
@@ -10,8 +10,89 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+clients = {}
+lock = threading.Lock()
+
+def send_frame(conn, text):
+    data = text.encode()
+    header = bytes([0x81])
+    if len(data) < 126:
+        header += bytes([len(data)])
+    elif len(data) < 65536:
+        header += bytes([126]) + struct.pack('>H', len(data))
+    else:
+        header += bytes([127]) + struct.pack('>Q', len(data))
+    conn.sendall(header + data)
+
+def read_frame(conn):
+    head = conn.recv(2)
+    if len(head) < 2:
+        return None
+    opcode, length = head[0] & 0x0f, head[1] & 0x7f
+    if length == 126:
+        length = struct.unpack('>H', conn.recv(2))[0]
+    elif length == 127:
+        length = struct.unpack('>Q', conn.recv(8))[0]
+    mask = conn.recv(4)
+    payload = bytearray()
+    while len(payload) < length:
+        chunk = conn.recv(length - len(payload))
+        if not chunk:
+            return None
+        payload += chunk
+    if opcode == 8:
+        return None
+    return bytes(b ^ mask[i % 4] for i, b in enumerate(payload)).decode(errors='ignore')
+
+def broadcast(message, skip=None):
+    with lock:
+        targets = [c for cid, c in clients.items() if cid != skip]
+    for conn in targets:
+        try:
+            send_frame(conn, message)
+        except OSError:
+            pass
+
+def handle(conn, cid):
+    try:
+        request = conn.recv(4096).decode(errors='ignore')
+        key = next(line.split(':', 1)[1].strip() for line in request.split('\r\n') if line.lower().startswith('sec-websocket-key'))
+        accept = base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()).decode()
+        conn.sendall(f'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n'.encode())
+        with lock:
+            clients[cid] = conn
+        send_frame(conn, json.dumps({'you': cid}))
+        while True:
+            text = read_frame(conn)
+            if text is None:
+                break
+            try:
+                state = json.loads(text)
+            except ValueError:
+                continue
+            state['id'] = cid
+            broadcast(json.dumps(state), skip=cid)
+    except (OSError, StopIteration):
+        pass
+    finally:
+        with lock:
+            clients.pop(cid, None)
+        broadcast(json.dumps({'id': cid, 'gone': True}))
+        conn.close()
+
+def websocket_server(port):
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(('', port))
+    server.listen()
+    counter = 0
+    while True:
+        conn, _ = server.accept()
+        counter += 1
+        threading.Thread(target=handle, args=(conn, counter), daemon=True).start()
+
 port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-print(f'http://localhost:{port}', flush=True)
-import os
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+threading.Thread(target=websocket_server, args=(port + 1,), daemon=True).start()
+print(f'http://localhost:{port} (websocket on {port + 1})', flush=True)
 ThreadingHTTPServer(('', port), Handler).serve_forever()

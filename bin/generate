@@ -48,6 +48,7 @@ query = <<~QL
   (
     way["building"](#{area});
     way["highway"](#{area});
+    way["railway"="rail"](#{area});
         node["natural"="tree"](#{area});
         node["shop"]["name"](#{area});
         node["amenity"]["name"](#{area});
@@ -61,10 +62,19 @@ query = <<~QL
 QL
 
 warn "Fetching #{name} from Overpass..."
-elements = %w[https://overpass-api.de/api/interpreter https://overpass.kumi.systems/api/interpreter].each do |server|
-  response = Net::HTTP.post_form(URI(server), data: query)
-  break JSON.parse(response.body.force_encoding('UTF-8'))['elements'] if response.code == '200'
-  warn "#{server} answered #{response.code}, trying the next one"
+elements = nil
+6.times do |attempt|
+  %w[https://overpass-api.de/api/interpreter https://overpass.kumi.systems/api/interpreter].each do |server|
+    response = Net::HTTP.post_form(URI(server), data: query)
+    if response.code == '200'
+      elements = JSON.parse(response.body.force_encoding('UTF-8'))['elements']
+      break
+    end
+    warn "#{server} answered #{response.code}"
+  end
+  break if elements
+  warn "Waiting 45 s before attempt #{attempt + 2}"
+  sleep 45
 end
 abort 'Overpass unavailable' unless elements.is_a?(Array)
 
@@ -98,6 +108,8 @@ elements.each do |element|
   elsif tags['highway'] && WIDTHS[tags['highway']]
     roads << { p: points, w: WIDTHS[tags['highway']], kind: PATHS.include?(tags['highway']) ? 'path' : 'road',
                name: tags['name'], bridge: (true if tags['bridge'] && tags['bridge'] != 'no') }.compact
+  elsif tags['railway'] == 'rail'
+    roads << { p: points, w: 3, kind: 'rail', name: tags['name'], bridge: (true if tags['bridge'] && tags['bridge'] != 'no') }.compact
   elsif tags['waterway']
     roads << { p: points, w: tags['width']&.to_f || WATER[tags['waterway']], kind: 'water', name: tags['name'] }.compact
   elsif closed && points.size >= 3
@@ -114,13 +126,19 @@ elements.each do |element|
   end
 end
 
-pois.each do |x, z, name|
-  building = buildings.find do |b|
-    xs, zs = b[:p].transpose
-    x.between?(xs.min, xs.max) && z.between?(zs.min, zs.max) && inside?(b[:p], x, z)
-  end
-  building[:sign] ||= name.slice(0, 24) if building
+grid = Hash.new { |h, k| h[k] = [] }
+buildings.each do |b|
+  xs, zs = b[:p].transpose
+  b[:centroid] = [xs.sum / xs.size, zs.sum / zs.size]
+  grid[[(b[:centroid][0] / 50).floor, (b[:centroid][1] / 50).floor]] << b
 end
+pois.each do |x, z, name|
+  next unless name
+  nearby = (-1..1).flat_map { |dx| (-1..1).flat_map { |dz| grid[[(x / 50).floor + dx, (z / 50).floor + dz]] } }
+  building = nearby.find { |b| inside?(b[:p], x, z) } || nearby.min_by { |b| Math.hypot(b[:centroid][0] - x, b[:centroid][1] - z) }
+  building[:sign] ||= name.slice(0, 24) if building && Math.hypot(building[:centroid][0] - x, building[:centroid][1] - z) < 40
+end
+buildings.each { |b| b.delete(:centroid) }
 warn "#{buildings.count { |b| b[:sign] }} buildings with signs"
 
 start = { x: 0, z: 0, heading: 0 }

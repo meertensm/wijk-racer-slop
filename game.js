@@ -37,10 +37,11 @@ function nextSlide() {
   if (!slides.length) return
   const img = document.createElement('img')
   img.src = slides[slide++ % slides.length]
-  loadingSlides.append(img)
-  while (loadingSlides.children.length > 2) loadingSlides.firstChild.remove()
-}
-nextSlide()
+    loadingSlides.append(img)
+    while (loadingSlides.children.length > 2) loadingSlides.firstChild.remove()
+  }
+  nextSlide()
+  document.getElementById('player-name').value = localStorage.getItem('playerName') || `Panda-${Math.floor(Math.random() * 900 + 100)}`
 const slideTimer = setInterval(nextSlide, 4000)
 let progress = 0
 const PHASES = { fetch: 3, terrain: 12, stamp: 2, prepare: 3, index: 1, roads: 8, buildings: 30, merge: 10, ground: 20, trees: 3, walkers: 8 }
@@ -61,8 +62,8 @@ let world
 await phase('fetch', async () => { world = await fetch(`worlds/${WORLD}.json`, { cache: 'no-store' }).then(response => response.json()) })
 
 const COLORS = {
-  walls:      [0x9c5a45, 0x6e4636, 0xc9b48a, 0xe8e4da, 0xb8b4ac, 0xa8705a].map(hex => new THREE.Color(hex)),
-  roofs:      [0x4a3a36, 0x6b3b2f, 0x3e3e44, 0x5a4034, 0x4a4a52, 0x703a30].map(hex => new THREE.Color(hex)),
+  walls:      [0x9c5a45, 0x6e4636, 0xc9b48a, 0xe8e4da, 0xb8b4ac, 0xa8705a, 0x7a3b2e, 0xd9cdb8, 0x5b4b45, 0xc2a27a, 0xf1ece0, 0x8d6a52].map(hex => new THREE.Color(hex)),
+  roofs:      [0x4a3a36, 0x6b3b2f, 0x3e3e44, 0x5a4034, 0x4a4a52, 0x703a30, 0x2f2f33, 0x8a4a3a, 0x555049, 0x3a2e2a, 0x6a5a4a, 0x46403c].map(hex => new THREE.Color(hex)),
   glass:      new THREE.Color(0x26323f),
   door:       new THREE.Color(0x4a3222),
   chimney:    new THREE.Color(0x6b4a3a),
@@ -79,7 +80,8 @@ const COLORS = {
     lot:        new THREE.Color(0xb3ae9f),
   ground:     new THREE.Color(0xa9d682),
   concrete:   new THREE.Color(0x8a8d90),
-  rail:       new THREE.Color(0xd0d3d6),
+  rail:       new THREE.Color(0xa0a0a0),
+  ballast:    new THREE.Color(0x6b6558),
   embankment: new THREE.Color(0x7c9a5a),
   horizon:    new THREE.Color(0xdfeeff),
   zenith:     new THREE.Color(0x5aa9e8)
@@ -87,7 +89,7 @@ const COLORS = {
 
 const CELL = 40
 const CAR = { length: 3.4, width: 1.5 }
-const PANDA = { topSpeed: 42, reverseSpeed: 5, acceleration: 6, braking: 10, wheelbase: 2.16, steeringLock: 0.6, grip: 12 }
+const PANDA = { topSpeed: 48, reverseSpeed: 5, acceleration: 7.5, braking: 11, wheelbase: 2.16, steeringLock: 0.7, grip: 15 }
 const GRADE = 0.06
 const T = world.terrain
 
@@ -280,7 +282,7 @@ function signAtlas(signs) {
   return { map, rows }
 }
 
-const SIGNS = [...new Set(world.buildings.map(building => building.sign).filter(Boolean))].sort((a, b) => (brandOf(b) ? 1 : 0) - (brandOf(a) ? 1 : 0)).slice(0, 128)
+const SIGNS = [...new Set(world.buildings.map(building => building.sign).filter(Boolean))].sort((a, b) => (brandOf(b) ? 1 : 0) - (brandOf(a) ? 1 : 0)).slice(0, 512)
 const signs = signAtlas(SIGNS)
 MATERIALS.sign = infectable(new THREE.MeshToonMaterial({ map: signs.map, gradientMap: gradient, side: THREE.DoubleSide }))
 MATERIALS.sign.userData.outlineParameters = { visible: false }
@@ -654,7 +656,10 @@ function buildRoads(groups) {
 
   world.roads.forEach(road => {
     const points = road.samples
-    if (road.kind === 'water') {
+    if (road.kind === 'rail') {
+      strip(road, 3.4, 0.12, COLORS.ballast, groups.plain)
+      for (const side of [-1, 1]) band(points, side * 0.72, 0.1, 0.3, COLORS.rail, groups.plain)
+    } else if (road.kind === 'water') {
       strip(road, road.w, road.level === undefined ? 0.12 : 0, COLORS.water, groups.plain)
     } else if (road.kind === 'path') {
       strip(road, Math.min(road.w, 1.5), 0.12, COLORS.path, groups.paving)
@@ -862,7 +867,7 @@ function hipRoof(building, groups) {
   const minX = Math.min(...xs) - 0.4, maxX = Math.max(...xs) + 0.4
   const minZ = Math.min(...zs) - 0.4, maxZ = Math.max(...zs) + 0.4
   const inset = Math.min((maxZ - minZ) / 2, (maxX - minX) / 2)
-  const rise = Math.min((maxZ - minZ) * 0.45, 3.5)
+  const rise = Math.min((maxZ - minZ) * (0.35 + (Math.abs(minX * 3) % 10) / 40), 4)
   const midZ = (minZ + maxZ) / 2
   const top = building.base + building.h
   const back = ([lx, lz, y]) => [lx * cos - lz * sin, y + top, lx * sin + lz * cos]
@@ -932,6 +937,11 @@ function buildBuildings(groups) {
   world.buildings.forEach(building => {
     const heights = building.p.map(([x, z]) => terrainHeight(x, z))
     building.base = Math.max(...heights)
+    const seed = building.p[0][0] * 13 + building.p[0][1] * 7
+    building.c = Math.abs(Math.floor(seed)) % COLORS.walls.length
+    building.h = +(building.h + ((seed % 1) - 0.5) * 1.2).toFixed(1)
+    if (building.roof === 'hip' && Math.abs(seed) % 5 === 0) building.roof = 'flat'
+    else if (building.roof === 'flat' && building.h <= 8 && Math.abs(seed) % 7 === 0) building.roof = 'hip'
     const bottom = Math.min(...heights) - 0.5
     const shape = new THREE.Shape(building.p.map(([x, z]) => new THREE.Vector2(x, -z)))
     groups.brick.push(paint(new THREE.ExtrudeGeometry(shape, { depth: building.base + building.h - bottom, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, bottom, 0), COLORS.walls[building.c]))
@@ -996,7 +1006,8 @@ async function buildWorld() {
         } })
         await phase('ground', buildGround)
         await phase('trees', buildTrees)
-        buildSky()
+          buildTrains()
+          buildSky()
       }
 
 const TILE = 400
@@ -1073,6 +1084,65 @@ const CLEAN = new THREE.Color(0xefe6cf), FILTHY = new THREE.Color(0x4a3a24)
 function dirty(amount) {
   state.dirt = Math.min(1, (state.dirt || 0) + amount)
   bodyParts.forEach((mesh, i) => mesh.material.color.copy(CLEAN).lerp(FILTHY, state.dirt * (i ? 0.8 : 1)))
+}
+
+function buildTrains() {
+  const rails = world.roads.filter(road => road.kind === 'rail')
+  if (!rails.length) return
+  ;(world.places || []).filter(place => place.kind === 'station').forEach(place => {
+    let best = null
+    rails.forEach(road => {
+      for (let i = 1; i < road.samples.length; i++) {
+        const { t, distance } = pointToSegment(place.x, place.z, road.samples[i - 1], road.samples[i])
+        if (!best || distance < best.distance) best = { distance, a: road.samples[i - 1], b: road.samples[i], t }
+      }
+    })
+    if (!best || best.distance > 300) return
+    const heading = Math.atan2(best.b[0] - best.a[0], best.b[1] - best.a[1])
+    const x = best.a[0] + (best.b[0] - best.a[0]) * best.t, z = best.a[1] + (best.b[1] - best.a[1]) * best.t
+    const train = new THREE.Group()
+    for (let k = -1; k <= 1; k++) {
+      const wagon = new THREE.Group()
+      const add = (w, h, d, color, y, dz = 0) => { const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), solid(color)); mesh.position.set(0, y, dz); mesh.castShadow = true; wagon.add(mesh) }
+      add(2.8, 1.5, 26, 0x003082, 1.45)
+      add(2.85, 1.3, 26, 0xffc917, 2.85)
+      add(2.9, 0.55, 25, 0x1b2733, 2.85)
+      add(1.6, 0.7, 26, 0x1c1c1c, 0.35)
+      wagon.position.z = k * 27
+      train.add(wagon)
+    }
+    train.position.set(x, terrainHeight(x, z) + 0.15, z)
+    train.rotation.y = heading
+    scene.add(train)
+  })
+}
+
+function pandaModel(bodyColor) {
+  const group = new THREE.Group()
+  group.rotation.order = 'YXZ'
+  const part = (w, h, d, color, x, y, z) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), solid(color))
+    mesh.position.set(x, y, z)
+    mesh.castShadow = true
+    group.add(mesh)
+    return mesh
+  }
+  part(1.46, 0.5, 3.38, bodyColor, 0, 0.6, 0)
+  part(1.42, 0.6, 2.4, bodyColor, 0, 1.15, -0.45)
+  part(1.48, 0.14, 3.42, 0x3a3a3a, 0, 0.42, 0)
+  for (const side of [-1, 1]) {
+    part(0.02, 0.4, 0.9, 0x2b3a4a, side * 0.72, 1.2, 0.2)
+    part(0.02, 0.4, 0.95, 0x2b3a4a, side * 0.72, 1.2, -0.9)
+  }
+  part(1.3, 0.42, 0.02, 0x2b3a4a, 0, 1.2, -1.66)
+  part(1.3, 0.5, 0.02, 0x2b3a4a, 0, 1.17, 0.7).rotation.x = -0.4
+  const tyre = new THREE.CylinderGeometry(0.28, 0.28, 0.16, 12).rotateZ(Math.PI / 2)
+  for (const [x, z] of [[-0.66, 1.08], [0.66, 1.08], [-0.66, -1.08], [0.66, -1.08]]) {
+    const wheel = new THREE.Mesh(tyre, solid(0x111111))
+    wheel.position.set(x, 0.28, z)
+    group.add(wheel)
+  }
+  return group
 }
 
 function buildCar() {
@@ -1399,6 +1469,7 @@ function squash(walker) {
   scene.add(splat)
   streetEl.textContent = `${KINDS[walker.kind].label} geplet: +0,2 G-Point`
   thud(0.8)
+  scream(walker.kind)
     awardCoin(walker.x, walker.z, 0.2)
     dirty(0.12)
   }
@@ -1418,7 +1489,8 @@ function runOver(walker) {
     state.bloodAt = [state.x, state.z]
   streetEl.textContent = 'Niet poep oprapende labradoodle uitlater overreden: +1 G-Point'
   thud(1)
-  curse()
+  scream('man')
+  setTimeout(curse, 700)
   dirty(0.2)
   awardCoin(walker.x, walker.z)
 }
@@ -1426,7 +1498,7 @@ function runOver(walker) {
 const coinsEl = document.getElementById('coins')
 const coinFace = new THREE.TextureLoader().load('assets/gcoin.jpg')
 coinFace.colorSpace = THREE.SRGBColorSpace
-const coinMaterial = [new THREE.MeshToonMaterial({ color: 0xffc233, gradientMap: gradient }), new THREE.MeshToonMaterial({ map: coinFace, gradientMap: gradient }), new THREE.MeshToonMaterial({ map: coinFace, gradientMap: gradient })]
+const coinMaterial = [new THREE.MeshToonMaterial({ color: 0xffc233, gradientMap: gradient }), new THREE.MeshToonMaterial({ map: coinFace, color: 0xffd35c, gradientMap: gradient }), new THREE.MeshToonMaterial({ map: coinFace, color: 0xffd35c, gradientMap: gradient })]
 const coinGeometry = new THREE.CylinderGeometry(0.6, 0.6, 0.1, 24).rotateX(Math.PI / 2)
 const coins = []
 let gpunten = Number(localStorage.getItem('gpunten') || 0)
@@ -1487,6 +1559,27 @@ function combo(walker) {
   state.bloodAt = [state.x, state.z]
   streetEl.textContent = walker.stage === 1 ? 'Achteruit over de uitlater: +½ G-Point' : 'En nog eens vooruit: +½ G-Point'
   awardCoin(walker.x, walker.z, 0.5)
+}
+
+const rubber = new THREE.MeshBasicMaterial({ color: 0x1c1c1c, transparent: true, opacity: 0.55 })
+rubber.userData.outlineParameters = { visible: false }
+const skids = []
+
+function skidMarks(now) {
+  const braking = (keys.has('ShiftLeft') || keys.has('ShiftRight')) && Math.abs(state.speed) > 3
+  while (skids.length && now - skids[0].born > 90000) scene.remove(skids.shift().mesh)
+  if (!braking) { state.skidAt = null; return }
+  if (state.skidAt && Math.hypot(state.x - state.skidAt[0], state.z - state.skidAt[1]) < 1) return
+  state.skidAt = [state.x, state.z]
+  for (const side of [-1, 1]) {
+    const x = state.x + Math.cos(state.heading) * side * 0.66 - Math.sin(state.heading) * 1.1
+    const z = state.z - Math.sin(state.heading) * side * 0.66 - Math.cos(state.heading) * 1.1
+    const mark = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 1.3).rotateX(-Math.PI / 2), rubber)
+    mark.position.set(x, groundHeight(x, z) + 0.235, z)
+    mark.rotation.y = state.heading
+    scene.add(mark)
+    skids.push({ mesh: mark, born: now })
+  }
 }
 
 function bloodTrail() {
@@ -1635,6 +1728,10 @@ function respawn() {
   state.shake = 0
   state.dirt = 0
   dirty(0)
+  gpunten = 0
+  localStorage.setItem('gpunten', 0)
+  coinsEl.querySelector('span').textContent = '0'
+  coinsEl.hidden = true
   walkers.forEach(walker => {
     if (walker.dead || Math.hypot(walker.x - state.x, walker.z - state.z) > 6) return
     walker.x += Math.cos(state.heading) * 12
@@ -1818,13 +1915,43 @@ await buildWorld()
 const car = buildCar()
 await phase('walkers', buildWalkers)
 
+// SAMPLES (drop mp3/wav files in assets/sounds to replace the synthesized sounds):
+
+const samples = new Map()
+const SAMPLE_SETS = { scream: 4, zombie: 3, bark: 2 }
+
+function loadSample(name) {
+  if (samples.has(name)) return samples.get(name)
+  const promise = fetch(`assets/sounds/${name}.mp3`).then(response => response.ok ? response.arrayBuffer() : null)
+    .then(data => data && audio ? audio.decodeAudioData(data) : null).catch(() => null)
+  samples.set(name, promise)
+  return promise
+}
+
+async function playSample(name, { level = 1, loop = false, out } = {}) {
+  if (!audio) return null
+  const buffer = await loadSample(name)
+  if (!buffer) return null
+  const source = audio.createBufferSource(), gain = audio.createGain()
+  source.buffer = buffer
+  source.loop = loop
+  gain.gain.value = level
+  source.connect(gain).connect(out || sfx || audio.destination)
+  source.start()
+  return { source, gain }
+}
+
+const pickSample = set => `${set}${1 + Math.floor(random() * SAMPLE_SETS[set])}`
+let introTrack
+
 // METAL INTRO:
 
 
 
-function startMetal() {
+async function startMetal() {
   if (metal || !loadingEl.isConnected) return
   startAudio()
+  if (await loadSample('intro')) { metal = audio.createGain(); metal.gain.value = 0.7; metal.connect(audio.destination); introTrack = await playSample('intro', { loop: true, out: metal }); return }
   metal = audio.createGain()
   metal.gain.value = 0.5
   const drive = audio.createWaveShaper()
@@ -1882,7 +2009,8 @@ function hihat(time, out) { noiseBurst(time, 0.05, 'highpass', 7000, 0.25, out) 
 
 function stopMetal() {
   if (!metal) return
-  clearInterval(metalTimer)
+  if (metalTimer) clearInterval(metalTimer)
+  if (introTrack) setTimeout(() => introTrack.source.stop(), 2000)
   metal.gain.setTargetAtTime(0, audio.currentTime, 0.4)
   setTimeout(() => metal.disconnect(), 2000)
 }
@@ -1957,17 +2085,142 @@ function startSfx() {
   engine.start()
 }
 
+let wasGas = false, blipUntil = 0, screech = null
+
 function updateEngine() {
   if (!engine) return
   const speed = Math.abs(state.speed)
   const gear = Math.floor(speed / 9)
   const revs = (speed - gear * 9) / 9
-  engine.frequency.setTargetAtTime(45 + revs * 70 + gear * 8, audio.currentTime, 0.05)
-  engineGain.gain.setTargetAtTime(0.05 + revs * 0.07 + (keys.has('ArrowUp') || keys.has('KeyW') ? 0.04 : 0), audio.currentTime, 0.1)
+  const gas = keys.has('ArrowUp') || keys.has('KeyW')
+  if (wasGas && !gas && speed > 6 && random() < 0.35) blipUntil = audio.currentTime + 0.35
+  wasGas = gas
+  const blip = audio.currentTime < blipUntil ? 60 : 0
+  engine.frequency.setTargetAtTime(45 + revs * 70 + gear * 8 + blip, audio.currentTime, 0.05)
+  engineGain.gain.setTargetAtTime(0.05 + revs * 0.07 + (gas || blip ? 0.04 : 0), audio.currentTime, 0.1)
+  const braking = (keys.has('ShiftLeft') || keys.has('ShiftRight')) && speed > 3
+  if (braking && !screech) {
+    screech = { gain: audio.createGain(), voices: [], stop: () => {} }
+    playSample('brake', { loop: true, level: 0.5 }).then(track => { if (track) { screech.sampled = track; screech.stop = () => track.source.stop() } else { screech = null; synthSqueal() } })
+    return
+  }
+  function synthSqueal() {
+    const time = audio.currentTime
+    const gain = audio.createGain(), tone = audio.createBiquadFilter(), wobble = audio.createOscillator(), depth = audio.createGain()
+    gain.gain.setValueAtTime(0.0001, time)
+    tone.type = 'lowpass'
+    tone.frequency.value = 4200
+    tone.Q.value = 1.5
+    wobble.frequency.value = 9
+    depth.gain.value = 110
+    wobble.connect(depth)
+    const voices = [1850, 2790].map(frequency => {
+      const osc = audio.createOscillator(), level = audio.createGain()
+      osc.type = 'sawtooth'
+      osc.frequency.value = frequency
+      depth.connect(osc.frequency)
+      level.gain.value = frequency > 2000 ? 0.35 : 0.6
+      osc.connect(level).connect(tone)
+      osc.start(time)
+      return osc
+    })
+    const buffer = audio.createBuffer(1, audio.sampleRate, audio.sampleRate)
+    const data = buffer.getChannelData(0)
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1
+    const noise = audio.createBufferSource(), hiss = audio.createBiquadFilter(), hissLevel = audio.createGain()
+    noise.buffer = buffer
+    noise.loop = true
+    hiss.type = 'bandpass'
+    hiss.frequency.value = 3200
+    hiss.Q.value = 3
+    hissLevel.gain.value = 0.12
+    noise.connect(hiss).connect(hissLevel).connect(tone)
+    noise.start(time)
+    wobble.start(time)
+    tone.connect(gain).connect(sfx)
+    screech = { stop: () => { voices.forEach(v => v.stop()); noise.stop(); wobble.stop() }, gain, voices }
+  }
+  if (screech) {
+    const level = braking ? Math.min(0.4, 0.12 + speed / 40) : 0
+    ;(screech.sampled ? screech.sampled.gain : screech.gain).gain.setTargetAtTime(level, audio.currentTime, braking ? 0.06 : 0.1)
+    screech.voices.forEach((osc, i) => osc.frequency.setTargetAtTime((i ? 2790 : 1850) * (1 + (30 - Math.min(speed, 30)) / 120), audio.currentTime, 0.1))
+    if (!braking) {
+      const old = screech
+      setTimeout(() => old.stop(), 500)
+      screech = null
+    }
+  }
+}
+
+function scream(kind) {
+  if (!sfx) return
+  playSample(pickSample(kind === 'zombie' ? 'zombie' : 'scream'), { level: 0.9 }).then(track => { if (!track) synthScream(kind) })
+}
+
+function synthScream(kind) {
+  const time = audio.currentTime
+  const variants = [[520, 260, 0.7], [680, 300, 0.55], [430, 180, 0.9], [760, 420, 0.4]]
+  const [start, end, length] = variants[Math.floor(random() * variants.length)]
+  const pitch = kind === 'zombie' ? 0.5 : 1
+  const osc = audio.createOscillator(), vibrato = audio.createOscillator(), depth = audio.createGain(), formant = audio.createBiquadFilter(), gain = audio.createGain()
+  osc.type = 'sawtooth'
+  osc.frequency.setValueAtTime(start * pitch, time)
+  osc.frequency.exponentialRampToValueAtTime(end * pitch, time + length)
+  vibrato.frequency.value = 7
+  depth.gain.value = 25
+  vibrato.connect(depth).connect(osc.frequency)
+  formant.type = 'bandpass'
+  formant.frequency.setValueAtTime(1100 * pitch, time)
+  formant.frequency.linearRampToValueAtTime(700 * pitch, time + length)
+  formant.Q.value = 2
+  gain.gain.setValueAtTime(0.0001, time)
+  gain.gain.exponentialRampToValueAtTime(0.7, time + 0.05)
+  gain.gain.setValueAtTime(0.7, time + length * 0.6)
+  gain.gain.exponentialRampToValueAtTime(0.001, time + length)
+  osc.connect(formant).connect(gain).connect(sfx)
+  osc.start(time)
+  vibrato.start(time)
+  osc.stop(time + length + 0.05)
+  vibrato.stop(time + length + 0.05)
+}
+
+let groanTimer = 0
+function updateGroans(dt) {
+  if (!sfx) return
+  groanTimer -= dt
+  if (groanTimer > 0) return
+  groanTimer = 1.2 + random() * 2
+  const near = walkers.filter(walker => walker.kind === 'zombie' && !walker.dead && Math.hypot(walker.x - state.x, walker.z - state.z) < 45)
+  if (!near.length) return
+  const zombie = near[Math.floor(random() * near.length)]
+  const level = Math.max(0, 1 - Math.hypot(zombie.x - state.x, zombie.z - state.z) / 45) * 0.5
+  const time = audio.currentTime, osc = audio.createOscillator(), wobble = audio.createOscillator(), depth = audio.createGain(), filter = audio.createBiquadFilter(), gain = audio.createGain()
+  osc.type = 'sawtooth'
+  osc.frequency.setValueAtTime(70 + random() * 30, time)
+  osc.frequency.linearRampToValueAtTime(55, time + 1.4)
+  wobble.frequency.value = 5
+  depth.gain.value = 8
+  wobble.connect(depth).connect(osc.frequency)
+  filter.type = 'lowpass'
+  filter.frequency.setValueAtTime(400, time)
+  filter.frequency.linearRampToValueAtTime(900, time + 0.7)
+  filter.frequency.linearRampToValueAtTime(300, time + 1.4)
+  gain.gain.setValueAtTime(0.0001, time)
+  gain.gain.exponentialRampToValueAtTime(level, time + 0.3)
+  gain.gain.exponentialRampToValueAtTime(0.001, time + 1.5)
+  osc.connect(filter).connect(gain).connect(sfx)
+  osc.start(time)
+  wobble.start(time)
+  osc.stop(time + 1.6)
+  wobble.stop(time + 1.6)
 }
 
 function thud(strength = 1) {
   if (!sfx) return
+  playSample('crash', { level: strength }).then(track => { if (!track) synthThud(strength) })
+}
+
+function synthThud(strength = 1) {
   const time = audio.currentTime
   const buffer = audio.createBuffer(1, audio.sampleRate * 0.3, audio.sampleRate)
   const data = buffer.getChannelData(0)
@@ -1991,6 +2244,10 @@ function thud(strength = 1) {
 
 function bark(distance) {
   if (!sfx) return
+  playSample(pickSample('bark'), { level: Math.max(0, 1 - distance / 60) }).then(track => { if (!track) synthBark(distance) })
+}
+
+function synthBark(distance) {
   const time = audio.currentTime, level = Math.max(0, 1 - distance / 60) * 0.5
   for (let k = 0; k < 2; k++) {
     const osc = audio.createOscillator(), gain = audio.createGain(), filter = audio.createBiquadFilter()
@@ -2037,6 +2294,153 @@ function updateHardstyle() {
 }
 
 addEventListener('keydown', startAudio, { once: true })
+
+// BIG MAP:
+
+const bigmap = document.getElementById('bigmap')
+let worldImage
+
+function drawWorldImage() {
+  const [minX, minZ, maxX, maxZ] = world.bounds
+  const size = 2048, scale = size / Math.max(maxX - minX, maxZ - minZ)
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#dfe9cf'
+  ctx.fillRect(0, 0, size, size)
+  ctx.save()
+  ctx.scale(scale, scale)
+  ctx.translate(-minX, -minZ)
+  ctx.lineCap = ctx.lineJoin = 'round'
+  const stroke = (road, color, width) => {
+    ctx.strokeStyle = color
+    ctx.lineWidth = width
+    ctx.beginPath()
+    road.p.forEach(([x, z], i) => i ? ctx.lineTo(x, z) : ctx.moveTo(x, z))
+    ctx.stroke()
+  }
+  world.areas.forEach(area => {
+    if (area.kind !== 'water' && area.kind !== 'forest') return
+    ctx.fillStyle = area.kind === 'water' ? '#6fb3e0' : '#b9d3a0'
+    ctx.beginPath()
+    area.p.forEach(([x, z], i) => i ? ctx.lineTo(x, z) : ctx.moveTo(x, z))
+    ctx.fill()
+  })
+  ctx.fillStyle = '#8a8378'
+  world.buildings.forEach(building => { const [x, z] = building.p[0]; ctx.fillRect(x - 3, z - 3, 6, 6) })
+  world.roads.forEach(road => {
+    if (road.kind === 'water') stroke(road, '#6fb3e0', Math.max(road.w, 6))
+    else if (road.kind === 'rail') stroke(road, '#3a3a3a', 3)
+    else if (road.kind === 'road') stroke(road, road.w >= 9 ? '#4a4d55' : '#6b6e75', Math.max(road.w, 5))
+  })
+  ctx.restore()
+  return { canvas, scale, minX, minZ }
+}
+
+function drawBigMap() {
+  if (bigmap.hidden) return
+  worldImage ||= drawWorldImage()
+  const ctx = bigmap.getContext('2d')
+  const size = Math.min(innerWidth, innerHeight) - 40
+  bigmap.width = bigmap.height = size
+  ctx.drawImage(worldImage.canvas, 0, 0, size, size)
+  const factor = size / 2048 * worldImage.scale
+  const dot = (x, z, color, radius, label) => {
+    const px = (x - worldImage.minX) * factor, pz = (z - worldImage.minZ) * factor
+    ctx.fillStyle = color
+    ctx.beginPath()
+    ctx.arc(px, pz, radius, 0, Math.PI * 2)
+    ctx.fill()
+    if (label) { ctx.fillStyle = '#111'; ctx.font = 'bold 13px system-ui'; ctx.fillText(label, px + 8, pz + 4) }
+  }
+  ;(world.places || []).forEach(place => dot(place.x, place.z, '#ffffffaa', 3))
+  others.forEach(other => dot(other.group.position.x, other.group.position.z, '#2f7cff', 6, other.name))
+  dot(state.x, state.z, '#e53935', 7, myName())
+}
+
+function toggleBigMap(open = bigmap.hidden) {
+  bigmap.hidden = !open
+  keys.clear()
+  drawBigMap()
+}
+
+// MULTIPLAYER:
+
+const nameInput = document.getElementById('player-name')
+const playersEl = document.getElementById('players')
+const others = new Map()
+let socket, lastSent = 0
+const myName = () => (nameInput.value || '').trim().slice(0, 16) || 'Panda'
+
+function nameLabel(text) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 256
+  canvas.height = 64
+  const ctx = canvas.getContext('2d')
+  ctx.font = 'bold 34px system-ui, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'
+  ctx.fillRect(0, 8, 256, 48)
+  ctx.fillStyle = '#fff'
+  ctx.fillText(text, 128, 44)
+  const texture = new THREE.CanvasTexture(canvas)
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }))
+  sprite.material.userData.outlineParameters = { visible: false }
+  sprite.scale.set(4, 1, 1)
+  sprite.position.y = 2.6
+  return sprite
+}
+
+function connectMultiplayer() {
+  localStorage.setItem('playerName', myName())
+  try {
+    socket = new WebSocket(`ws://${location.hostname}:${Number(location.port || 80) + 1}`)
+  } catch { return }
+  socket.onmessage = ({ data }) => {
+    const message = JSON.parse(data)
+    if (message.you !== undefined) return
+    if (message.gone) {
+      const other = others.get(message.id)
+      if (other) { scene.remove(other.group); others.delete(message.id) }
+      renderPlayers()
+      return
+    }
+    let other = others.get(message.id)
+    if (!other) {
+      const hue = [...String(message.name)].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 360
+      const group = pandaModel(new THREE.Color().setHSL(hue / 360, 0.6, 0.55).getHex())
+      group.add(nameLabel(message.name))
+      group.position.set(message.x, terrainHeight(message.x, message.z), message.z)
+      scene.add(group)
+      other = { group, name: message.name, target: { x: message.x, z: message.z, heading: message.heading } }
+      others.set(message.id, other)
+      renderPlayers()
+    }
+    other.target = { x: message.x, z: message.z, heading: message.heading }
+    other.speed = message.speed
+  }
+  socket.onclose = () => { socket = null; setTimeout(connectMultiplayer, 3000) }
+  socket.onerror = () => socket && socket.close()
+}
+
+function renderPlayers() {
+  playersEl.innerHTML = [myName(), ...[...others.values()].map(other => other.name)].map((name, i) => `<div${i ? '' : ' class="me"'}>${name}</div>`).join('')
+}
+
+function updateMultiplayer(dt, now) {
+  if (socket && socket.readyState === 1 && now - lastSent > 100) {
+    lastSent = now
+    socket.send(JSON.stringify({ name: myName(), x: +state.x.toFixed(2), z: +state.z.toFixed(2), heading: +state.heading.toFixed(3), speed: +state.speed.toFixed(1) }))
+  }
+  others.forEach(other => {
+    const { group, target } = other
+    group.position.x += (target.x - group.position.x) * Math.min(1, dt * 8)
+    group.position.z += (target.z - group.position.z) * Math.min(1, dt * 8)
+    group.position.y = groundHeight(group.position.x, group.position.z)
+    const turn = Math.atan2(Math.sin(target.heading - group.rotation.y), Math.cos(target.heading - group.rotation.y))
+    group.rotation.y += turn * Math.min(1, dt * 8)
+  })
+}
 
 // FAST TRAVEL:
 
@@ -2087,6 +2491,8 @@ const keys = new Set()
 window.debug = { keys, walkers, travelTo, dropPoop, poops, SIGNS, signs, camera, scene, MATERIALS, respawn, get explosion() { return explosion }, get audio() { return audio }, get metal() { return metal }, get state() { return state } }
 addEventListener('keydown', event => {
   if (event.code === 'Escape' && !travel.hidden) return toggleTravel(false)
+  if (event.code === 'Escape' && !/INPUT|TEXTAREA/.test(event.target.tagName)) return toggleBigMap()
+  if (!bigmap.hidden) return
   if (event.code === 'KeyT' && !/INPUT|TEXTAREA/.test(event.target.tagName)) return toggleTravel()
   if (!travel.hidden) return
   keys.add(event.code)
@@ -2185,10 +2591,14 @@ function step(dt, now) {
   updateInfection(now)
   updatePuffs(dt, now)
   updateHardstyle()
+  updateMultiplayer(dt, now)
+  if (!bigmap.hidden && Math.floor(now / 250) !== Math.floor((now - dt * 1000) / 250)) drawBigMap()
   updateEngine()
   updateBarks(dt)
+  updateGroans(dt)
   bloodTrail()
-      updateCoins(dt)
+  skidMarks(now)
+  updateCoins(dt)
       updateTown(dt)
     drawMinimap(dt)
   }
@@ -2221,6 +2631,8 @@ await Promise.all(streamRoadTiles(0, 1))
 console.info(`ready: ${Math.round(performance.now())} ms`)
 clearInterval(slideTimer)
 stopMetal()
+connectMultiplayer()
+renderPlayers()
 loadingEl.classList.add('done')
 setTimeout(() => loadingEl.remove(), 900)
 requestAnimationFrame(frame)
