@@ -2266,13 +2266,6 @@ function synthBark(distance) {
   }
 }
 
-let barkTimer = 0
-function updateBarks(dt) {
-  barkTimer -= dt
-  if (barkTimer > 0) return
-  barkTimer = 1.5 + random() * 3
-  if (nearest.beagle < 60) bark(nearest.beagle)
-}
 
 async function speak(npc, index) {
   const gender = npc.voice & 2 ? 'female' : 'male', mood = npc.voice & 1 ? 'happy' : 'angry'
@@ -2500,6 +2493,10 @@ const EVENTS = {
     const npc = npcs.get(id)
     if (!npc || Math.hypot(npc.x - state.x, npc.z - state.z) > 60) return
     setTimeout(() => speak(npc, index), npc.dead ? 700 : 0)
+  },
+  bark(id) {
+    const npc = npcs.get(id)
+    if (npc) bark(Math.hypot(npc.x - state.x, npc.z - state.z))
   }
 }
 
@@ -2585,7 +2582,7 @@ function travelTo(name) {
 travelList.addEventListener('click', event => { const item = event.target.closest('li'); if (item) travelTo(item.dataset.name) })
 
 const keys = new Set()
-window.debug = { keys, npcs, poops, others, travelTo, SIGNS, signs, camera, scene, MATERIALS, respawn, unstick, applySnapshot, applyFrame, EVENTS, get socket() { return socket }, get myId() { return myId }, get explosion() { return explosion }, get audio() { return audio }, get metal() { return metal }, get state() { return state } }
+window.debug = { keys, npcs, poops, others, travelTo, SIGNS, signs, camera, scene, MATERIALS, respawn, unstick, applySnapshot, applyFrame, EVENTS, get socket() { return socket }, get myId() { return myId }, get engineSample() { return engineSample }, get hardstyleSampled() { return hardstyleSampled }, get explosion() { return explosion }, get audio() { return audio }, get metal() { return metal }, get state() { return state } }
 addEventListener('keydown', event => {
   if (event.code === 'Escape' && !travel.hidden) return toggleTravel(false)
   if (event.code === 'Escape' && !/INPUT|TEXTAREA/.test(event.target.tagName)) return toggleBigMap()
@@ -2734,7 +2731,6 @@ function step(dt, now) {
   updateMultiplayer(dt, now)
   if (!bigmap.hidden && Math.floor(now / 250) !== Math.floor((now - dt * 1000) / 250)) drawBigMap()
   updateEngine()
-  updateBarks(dt)
   updateGroans(dt)
   bloodTrail()
   skidMarks(now)

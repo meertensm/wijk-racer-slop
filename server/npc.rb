@@ -7,6 +7,7 @@ class Npc < Entity
   PACE   = 0.8..1.4
   GENDERS = %i[male]
   MOODS   = %i[angry]
+  PAUSE   = 8
 
   attr_reader :speed, :version, :dead, :dead_at, :killer, :home, :voice
 
@@ -46,7 +47,7 @@ class Npc < Entity
     end
     @timer -= dt
     decide(game) if @timer.negative?
-    say(game) if game.now - @chatted > 8 && chatty?(game)
+    say(game) if game.now - @chatted > self.class::PAUSE && chatty?(game)
     move(dt)
   end
 

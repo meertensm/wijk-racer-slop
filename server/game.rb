@@ -45,6 +45,10 @@ class Game
     events << ['say', npc.id, index]
   end
 
+  def bark(npc)
+    events << ['bark', npc.id]
+  end
+
   def award(player, amount, npc, stage)
     scores.award(player.name, amount)
     events << ['combo', npc.id, player.id, stage]
