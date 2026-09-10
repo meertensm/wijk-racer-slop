@@ -39,6 +39,7 @@
     #loading-bar { height: 6px; background: rgba(255, 255, 255, .2); border-radius: 3px; overflow: hidden; margin-top: 18px; }
     #loading-bar i { display: block; height: 100%; width: 0; background: #ffd166; transition: width .4s; }
     #loading-phase { display: block; margin-top: 8px; font-size: 14px; opacity: .7; }
+    #loading-credits { position: absolute; right: 0; bottom: -28px; font-size: 11px; opacity: .45; }
     @keyframes kenburns { from { transform: scale(1); } to { transform: scale(1.12) translate(-1.5%, -1%); } }
     @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
     #minimap { position: fixed; left: 24px; bottom: 20px; width: 200px; height: 200px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, .85); background: #cfe3b5; box-shadow: 0 4px 16px rgba(0, 0, 0, .35); }
@@ -62,6 +63,7 @@
     <p id="loading-tip"></p>
     <div id="loading-bar"><i></i></div>
     <small id="loading-phase">Laden…</small>
+    <small id="loading-credits"></small>
   </div>
 </div>
 <div id="hint">Pijltjes of WASD · Shift = handrem · T = fast travel</div>

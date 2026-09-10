@@ -23,11 +23,14 @@ const loadingSlides = document.getElementById('loading-slides')
 document.getElementById('loading-tip').textContent = TIPS[Math.floor(Math.random() * TIPS.length)]
 let snapshots = []
 try { snapshots = JSON.parse(localStorage.getItem('snapshots') || '[]') } catch {}
+const credits = await fetch('assets/intro/credits.json').then(response => response.json()).catch(() => [])
+const slides = [...credits.map(credit => credit.file).sort(() => Math.random() - 0.5), ...snapshots]
+if (credits.length) document.getElementById('loading-credits').textContent = 'Foto’s: Wikimedia Commons, ' + [...new Set(credits.map(credit => credit.license))].join(' / ')
 let slide = 0
 function nextSlide() {
-  if (!snapshots.length) return
+  if (!slides.length) return
   const img = document.createElement('img')
-  img.src = snapshots[slide++ % snapshots.length]
+  img.src = slides[slide++ % slides.length]
   loadingSlides.append(img)
   while (loadingSlides.children.length > 2) loadingSlides.firstChild.remove()
 }
@@ -153,12 +156,33 @@ const TEXTURES = {
     }
   }),
   brick: texture(2.4, (ctx, size) => {
-    ctx.fillStyle = grey(210)
+    ctx.fillStyle = grey(215)
     ctx.fillRect(0, 0, size, size)
-    for (let row = 0; row < 8; row++) for (let column = -1; column < 4; column++) {
-      ctx.fillStyle = grey(165 + random() * 40)
-      ctx.fillRect(column * 64 + (row % 2) * 32 + 2, row * 32 + 2, 60, 28)
+    const w = size / 10, h = size / 32
+    for (let row = 0; row < 32; row++) for (let column = -1; column < 10; column++) {
+      ctx.fillStyle = grey(160 + random() * 50)
+      ctx.fillRect(column * w + (row % 2) * w / 2 + 1, row * h + 1, w - 2, h - 2)
     }
+  }),
+  window: texture(1, (ctx, size) => {
+    const glass = ctx.createLinearGradient(0, 0, size / 2, size)
+    glass.addColorStop(0, '#5d7f9f')
+    glass.addColorStop(0.45, '#324a63')
+    glass.addColorStop(0.5, '#6f90ad')
+    glass.addColorStop(1, '#22303f')
+    ctx.fillStyle = '#f2f0ea'
+    ctx.fillRect(0, 0, size / 2, size)
+    ctx.fillStyle = glass
+    ctx.fillRect(12, 12, size / 2 - 24, size - 24)
+    ctx.fillStyle = '#f2f0ea'
+    ctx.fillRect(size / 4 - 4, 12, 8, size - 24)
+    ctx.fillRect(12, size * 0.4 - 4, size / 2 - 24, 8)
+    ctx.fillStyle = '#4a3222'
+    ctx.fillRect(size / 2, 0, size / 2, size)
+    ctx.fillStyle = '#5c4030'
+    for (let k = 0; k < 2; k++) ctx.fillRect(size / 2 + 24, 24 + k * size * 0.42, size / 2 - 48, size * 0.3)
+    ctx.fillStyle = '#d9c26a'
+    ctx.fillRect(size / 2 + 28, size * 0.5, 14, 14)
   }),
   tiles: texture(2, (ctx, size) => {
     ctx.fillStyle = grey(150)
@@ -171,7 +195,11 @@ const TEXTURES = {
 }
 
 const textured = map => new THREE.MeshToonMaterial({ map, vertexColors: true, gradientMap: gradient, side: THREE.DoubleSide })
-const MATERIALS = { plain: toon, asphalt: textured(TEXTURES.asphalt), paving: textured(TEXTURES.paving), brick: textured(TEXTURES.brick), tiles: textured(TEXTURES.tiles), ground: textured(TEXTURES.grass) }
+const MATERIALS = { plain: toon, asphalt: textured(TEXTURES.asphalt), paving: textured(TEXTURES.paving), brick: textured(TEXTURES.brick), tiles: textured(TEXTURES.tiles), ground: textured(TEXTURES.grass), window: textured(TEXTURES.window) }
+MATERIALS.window.map.wrapS = MATERIALS.window.map.wrapT = THREE.ClampToEdgeWrapping
+MATERIALS.window.map.repeat.set(1, 1)
+MATERIALS.window.userData.outlineParameters = { visible: false }
+;['plain', 'asphalt', 'paving', 'ground'].forEach(name => { MATERIALS[name].userData.outlineParameters = { visible: false } })
 
 const UPPER = ['hornbach', 'jumbo', 'aldi', 'lidl', 'hema', 'gamma', 'praxis', 'karwei', 'action', 'ikea', 'kfc', 'bp', 'plus', 'spar', 'coop', 'expert', 'wibra', 'intertoys', 'decathlon', 'primark', 'kwantum', 'shell', 'ing']
 const BRANDS = [['hornbach', '#f58220'], ['jumbo', '#f9c400', '#000'], ['albert heijn', '#00a0e2'], ['action', '#0c4da2'], ['kruidvat', '#e30613'],
@@ -213,6 +241,7 @@ function signAtlas(signs) {
 const SIGNS = [...new Set(world.buildings.map(building => building.sign).filter(Boolean))].sort((a, b) => (brandOf(b) ? 1 : 0) - (brandOf(a) ? 1 : 0)).slice(0, 128)
 const signs = signAtlas(SIGNS)
 MATERIALS.sign = new THREE.MeshToonMaterial({ map: signs.map, gradientMap: gradient, side: THREE.DoubleSide })
+MATERIALS.sign.userData.outlineParameters = { visible: false }
 
 function signQuad(sign, cx, cz, ux, uz, nx, nz, width, bottom, height) {
   const index = SIGNS.indexOf(sign)
@@ -317,12 +346,17 @@ function stampRoads() {
 }
 
 function markDualCarriageways() {
-  const wide = world.roads.filter(road => road.kind === 'road' && road.w >= 7 && road.name)
+  const wide = world.roads.filter(road => road.kind === 'road' && road.w >= 7)
+  const grid = new Map()
+  wide.forEach(road => road.p.forEach(([x, z]) => { const key = cellKey(x, z); if (!grid.has(key)) grid.set(key, new Set()); grid.get(key).add(road) }))
   wide.forEach(road => {
     const [mx, mz] = road.p[Math.floor(road.p.length / 2)]
-    road.dual = wide.some(other => other !== road && other.name === road.name && !other.p.some(p => road.p.some(q => p[0] === q[0] && p[1] === q[1])) && polylineDistance(mx, mz, other.p) < 16)
-    if (road.dual) road.w = 5.5
+    const cx = Math.floor(mx / CELL), cz = Math.floor(mz / CELL)
+    const candidates = new Set()
+    for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) (grid.get(`${cx + dx},${cz + dz}`) || []).forEach(other => candidates.add(other))
+    road.dual = [...candidates].some(other => other !== road && other.name === road.name && other.w === road.w && !other.p.some(p => road.p.some(q => p[0] === q[0] && p[1] === q[1])) && polylineDistance(mx, mz, other.p) < (road.w >= 10 ? 32 : 20))
   })
+  wide.forEach(road => { if (road.dual) road.w = road.w >= 10 ? 9 : 5.5 })
 }
 
 function prepareRoads() {
@@ -469,7 +503,7 @@ function junctionCorners(nodes, parts) {
       const corners = [at(ring, step), at(ring + 1, step), at(ring + 1, step + 1), at(ring, step + 1)]
       if (corners.some(([px, pz]) => onAnyAsphalt(px, pz, 0.35))) continue
       const [a, b, c, d] = corners.map(([px, pz]) => [px, terrainHeight(px, pz) + 0.26, pz])
-      acc.positions.push(...a, ...b, ...c, ...a, ...c, ...d)
+      acc.positions.push(...upward(a, b, c).flat(), ...upward(a, c, d).flat())
       for (let k = 0; k < 6; k++) { acc.normals.push(0, 1, 0); acc.colors.push(COLORS.sidewalk.r, COLORS.sidewalk.g, COLORS.sidewalk.b) }
     }
     if (acc.positions.length) parts.push(flush(acc))
@@ -509,9 +543,16 @@ function band(points, offset, width, lift, color, parts) {
   return inner
 }
 
+function upward(a, b, c) {
+  const ny = (c[0] - a[0]) * (b[2] - a[2]) - (c[2] - a[2]) * (b[0] - a[0])
+  return ny < -0.01 ? [a, c, b] : [a, b, c]
+}
+
 function skirt(top, bottom) {
   const positions = []
-  for (let i = 1; i < top.length; i++) positions.push(...top[i - 1], ...bottom[i - 1], ...bottom[i], ...top[i - 1], ...bottom[i], ...top[i])
+  for (let i = 1; i < top.length; i++) {
+    positions.push(...upward(top[i - 1], bottom[i - 1], bottom[i]).flat(), ...upward(top[i - 1], bottom[i], top[i]).flat())
+  }
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   geometry.computeVertexNormals()
@@ -541,7 +582,7 @@ function strip(road, width, lift, color, parts, nodes = road.nodes) {
 
 function dashes(points, parts) {
   const total = points.slice(1).reduce((sum, [x, z], i) => sum + Math.hypot(x - points[i][0], z - points[i][1]), 0)
-  for (let d = 2; d + 3 <= total; d += 9) parts.push(paint(ribbon([pointAt(points, d), pointAt(points, d + 3)], 0.15, 0.2), COLORS.dash))
+  for (let d = 2; d + 3 <= total; d += 9) parts.push(paint(ribbon([pointAt(points, d), pointAt(points, d + 3)], 0.15, 0.26), COLORS.dash))
 }
 
 function quad(cx, cz, ux, uz, nx, nz, width, bottom, height, color) {
@@ -598,8 +639,8 @@ function buildRoads(groups) {
       }
       if (road.w >= 7 || road.dual) {
             splitWhere(points, ([x, z]) => onOtherAsphalt(x, z, road, 2.5)).forEach(marks => {
-          if (!road.dual) dashes(marks, groups.plain)
-          for (const side of [-1, 1]) band(marks, side * (road.w / 2 - 0.35), 0.12, 0.2, COLORS.dash, groups.plain)
+                if (!road.dual || road.w >= 9) dashes(marks, groups.plain)
+          for (const side of [-1, 1]) band(marks, side * (road.w / 2 - 0.35), 0.12, 0.26, COLORS.dash, groups.plain)
         })
       }
             if (road.bridge) bridge(points, road.w, groups.plain)
@@ -644,7 +685,7 @@ function embankment(points, width, parts) {
   }
 }
 
-function quadInto(acc, cx, cz, ux, uz, nx, nz, width, bottom, height, color) {
+function quadInto(acc, cx, cz, ux, uz, nx, nz, width, bottom, height, color, cell = -1) {
   if (ux * nz - uz * nx < 0) { ux = -ux; uz = -uz }
   const ox = nx * 0.04, oz = nz * 0.04, half = width / 2
   const x0 = cx - ux * half + ox, z0 = cz - uz * half + oz, x1 = cx + ux * half + ox, z1 = cz + uz * half + oz
@@ -654,6 +695,10 @@ function quadInto(acc, cx, cz, ux, uz, nx, nz, width, bottom, height, color) {
     acc.normals.push(nx, 0, nz)
     acc.colors.push(color.r, color.g, color.b)
   }
+  if (cell >= 0 && acc.uvs) {
+    const u0 = cell / 2, u1 = (cell + 1) / 2
+    acc.uvs.push(u0, 0, u1, 0, u1, 1, u0, 0, u1, 1, u0, 1)
+  }
 }
 
 function flush(acc) {
@@ -661,6 +706,7 @@ function flush(acc) {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(acc.positions, 3))
   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(acc.normals, 3))
   geometry.setAttribute('color', new THREE.Float32BufferAttribute(acc.colors, 3))
+  if (acc.uvs) geometry.setAttribute('uv', new THREE.Float32BufferAttribute(acc.uvs, 2))
   return geometry
 }
 
@@ -695,7 +741,8 @@ function hipRoof(building, groups) {
 
 function facadeDetails(building, parts, signParts) {
   const points = building.p
-  const acc = { positions: [], normals: [], colors: [] }
+  const acc = { positions: [], normals: [], colors: [], uvs: [] }
+  const white = new THREE.Color(0xffffff)
   const floors = Math.max(1, Math.floor((building.h - 2.3) / 3) + 1)
   const front = frontEdge(building)
   points.forEach(([ax, az], i) => {
@@ -725,8 +772,8 @@ function facadeDetails(building, parts, signParts) {
     for (let k = 1; k <= count; k++) {
       const cx = ax + ux * spacing * k, cz = az + uz * spacing * k
       for (let floor = 0; floor < (brand ? 1 : floors); floor++) {
-              if (i === front && floor === 0 && k === 1 && building.h >= 3) quadInto(acc, cx, cz, ux, uz, nx, nz, 1.0, terrainHeight(cx, cz), 2.2 + building.base - terrainHeight(cx, cz), COLORS.door)
-              else quadInto(acc, cx, cz, ux, uz, nx, nz, 1.1, building.base + floor * 3 + 1, 1.3, COLORS.glass)
+              if (i === front && floor === 0 && k === 1 && building.h >= 3) quadInto(acc, cx, cz, ux, uz, nx, nz, 1.0, terrainHeight(cx, cz), 2.2 + building.base - terrainHeight(cx, cz), white, 1)
+              else quadInto(acc, cx, cz, ux, uz, nx, nz, 1.2, building.base + floor * 3 + 1, 1.4, white, 0)
             }
           }
         })
@@ -751,7 +798,7 @@ function buildBuildings(groups) {
     const shape = new THREE.Shape(building.p.map(([x, z]) => new THREE.Vector2(x, -z)))
     groups.brick.push(paint(new THREE.ExtrudeGeometry(shape, { depth: building.base + building.h - bottom, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, bottom, 0), COLORS.walls[building.c]))
     if (building.roof === 'hip') hipRoof(building, groups)
-    facadeDetails(building, groups.plain, groups.sign)
+    facadeDetails(building, groups.window, groups.sign)
 
   })
 }
@@ -791,7 +838,7 @@ function buildGround() {
 }
 
 async function buildWorld() {
-  const groups = { plain: [], asphalt: [], paving: [], brick: [], tiles: [], ground: [], sign: [] }
+  const groups = { plain: [], asphalt: [], paving: [], brick: [], tiles: [], ground: [], sign: [], window: [] }
   await phase('roads', () => buildRoads(groups))
   await phase('buildings', () => buildBuildings(groups))
   await phase('merge', () => { for (const [name, parts] of Object.entries(groups)) {
@@ -1287,10 +1334,10 @@ function indexRoads() {
   })
 }
 
-function nearestSegment(x, z) {
+function nearestSegment(x, z, reach = 1) {
   let best = null, bestDistance = Infinity, bestT = 0
   const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL)
-  for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+  for (let dx = -reach; dx <= reach; dx++) for (let dz = -reach; dz <= reach; dz++) {
     for (const i of segmentGrid.get(`${cx + dx},${cz + dz}`) || []) {
       const { t, distance } = pointToSegment(x, z, segments[i].a, segments[i].b)
       if (distance < bestDistance) { bestDistance = distance; best = segments[i]; bestT = t }
@@ -1427,8 +1474,8 @@ function toggleTravel(open = travel.hidden) {
 function travelTo(name) {
   const place = (world.places || []).find(place => place.name === name)
   if (!place) return
-  const { segment, distance, t } = nearestSegment(place.x, place.z)
-  if (segment && distance < 200) {
+    const { segment, distance, t } = nearestSegment(place.x, place.z, 6)
+    if (segment && distance < 250) {
     state.x = segment.a[0] + (segment.b[0] - segment.a[0]) * t
     state.z = segment.a[1] + (segment.b[1] - segment.a[1]) * t
     state.heading = Math.atan2(segment.b[0] - segment.a[0], segment.b[1] - segment.a[1])
@@ -1437,6 +1484,7 @@ function travelTo(name) {
     state.z = place.z
   }
   state.speed = 0
+  if (blocked(state.x - Math.sin(state.heading) * 9, state.z - Math.cos(state.heading) * 9)) state.heading += Math.PI
   camera.position.set(state.x - Math.sin(state.heading) * 9, groundHeight(state.x, state.z) + 4.5, state.z - Math.cos(state.heading) * 9)
   toggleTravel(false)
 }
