@@ -52,7 +52,8 @@ query = <<~QL
         node["shop"]["name"](#{area});
         node["amenity"]["name"](#{area});
     way["natural"~"^(water|wood|scrub)$"](#{area});
-    way["landuse"~"^(grass|forest|farmland|meadow|orchard|allotments)$"](#{area});
+        way["landuse"~"^(grass|forest|farmland|meadow|orchard|allotments|industrial|commercial|retail)$"](#{area});
+        way["amenity"="parking"](#{area});
     way["leisure"~"^(park|pitch|playground|garden)$"](#{area});
     way["waterway"~"^(river|canal|stream|ditch|drain)$"](#{area});
   );
@@ -103,6 +104,8 @@ elements.each do |element|
     kind = if tags['natural'] == 'water' then 'water'
            elsif tags['natural'] == 'wood' || tags['landuse'] == 'forest' then 'forest'
            elsif %w[farmland orchard allotments].include?(tags['landuse']) then 'field'
+           elsif tags['amenity'] == 'parking' then 'parking'
+           elsif %w[industrial commercial retail].include?(tags['landuse']) then 'lot'
            else 'grass'
            end
     areas << { p: points, kind: kind }
@@ -173,5 +176,7 @@ terrain = { x0: bounds[0], z0: bounds[1], sx: ((bounds[2] - bounds[0]) / cols).r
 world = { name: name, center: [lat0, lng0], bounds: bounds, start: start, terrain: terrain,
           buildings: buildings, roads: roads, areas: areas, trees: trees }
 
+previous = File.exist?("worlds/#{name}.json") ? JSON.parse(File.read("worlds/#{name}.json", encoding: 'UTF-8')) : {}
+%w[zones spots places towns].each { |key| world[key.to_sym] = previous[key] if previous[key] }
 File.write("worlds/#{name}.json", JSON.generate(world))
 warn "#{buildings.size} buildings, #{roads.size} roads, #{areas.size} areas, #{trees.size} trees, #{heights.size} heights (#{lowest}-#{heights.max} m) -> worlds/#{name}.json"

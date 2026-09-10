@@ -22,6 +22,7 @@
 #travel-list li:hover { background: rgba(255, 255, 255, .12); }
 #travel-list small { opacity: .6; }
     #coins { position: fixed; top: 44px; left: 24px; color: #ffd166; font: 700 22px system-ui, sans-serif; text-shadow: 0 2px 6px rgba(0, 0, 0, .6); }
+    #coins img { width: 34px; height: 34px; border-radius: 50%; border: 2px solid #ffd166; vertical-align: middle; margin-right: 4px; object-fit: cover; }
     #coins.bump { animation: bump .4s; }
     @keyframes bump { 40% { transform: scale(1.35); } }
     #townsign { position: fixed; top: 18%; left: 50%; transform: translateX(-50%); padding: 14px 36px; border: 5px solid #fff; outline: 3px solid #0d4fa0; border-radius: 6px; background: #0d4fa0; color: #fff; font: 700 44px/1 system-ui, sans-serif; letter-spacing: .02em; text-transform: uppercase; opacity: 0; pointer-events: none; }
@@ -40,7 +41,7 @@
 </head>
 <body>
 <div id="hint">Pijltjes of WASD · Shift = handrem · T = fast travel</div>
-<div id="coins">🪙 <span>0</span> G-punten</div>
+<div id="coins"><img src="assets/gcoin.jpg" alt=""> <span>0</span> G-Points</div>
 <div id="townsign"></div>
 <div id="travel" hidden>
   <h2>Fast travel</h2>

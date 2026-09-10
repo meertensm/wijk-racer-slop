@@ -17,9 +17,11 @@ const COLORS = {
   dash:       new THREE.Color(0xe8e8e0),
   path:       new THREE.Color(0xc9c1b2),
   water:      new THREE.Color(0x4f9fd6),
-  grass:      new THREE.Color(0x8fd06b),
+    grass:      new THREE.Color(0x9ccf78),
   forest:     new THREE.Color(0x4f9a48),
-  field:      new THREE.Color(0xd9c86a),
+    field:      new THREE.Color(0xd9c86a),
+    parking:    new THREE.Color(0x5f6268),
+    lot:        new THREE.Color(0xb3ae9f),
   ground:     new THREE.Color(0xa9d682),
   concrete:   new THREE.Color(0x8a8d90),
   rail:       new THREE.Color(0xd0d3d6),
@@ -43,7 +45,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true })
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5))
 renderer.setSize(innerWidth, innerHeight)
 renderer.shadowMap.enabled = true
-renderer.shadowMap.type = THREE.PCFSoftShadowMap
+renderer.shadowMap.type = THREE.PCFShadowMap
 document.body.prepend(renderer.domElement)
 const effect = new OutlineEffect(renderer, { defaultThickness: 0.0022, defaultColor: [0.12, 0.08, 0.1] })
 
@@ -62,7 +64,7 @@ const gradient = new THREE.DataTexture(new Uint8Array([110, 110, 110, 255, 185, 
 gradient.minFilter = gradient.magFilter = THREE.NearestFilter
 gradient.needsUpdate = true
 const toon = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: gradient, side: THREE.DoubleSide })
-const solid = (color, map) => new THREE.MeshToonMaterial({ color, map, gradientMap: gradient })
+const solid = (color, map) => new THREE.MeshToonMaterial({ color, gradientMap: gradient, ...(map && { map }) })
 
 // TEXTURES:
 
@@ -133,8 +135,8 @@ const BRANDS = [['hornbach', '#f58220'], ['jumbo', '#f9c400', '#000'], ['albert 
   ['bruna', '#e2001a'], ['mediamarkt', '#df0000'], ['media markt', '#df0000'], ['ikea', '#0058a3'], ['decathlon', '#0082c3'],
   ['burger king', '#d62300'], ['domino', '#006491'], ['subway', '#009b48'], ['rabobank', '#ff6600'], ['ing', '#ff6200'], ['abn', '#009286'],
   ['kwantum', '#e2001a'], ['leen bakker', '#e30613'], ['expert', '#f39200'], ['intertoys', '#e2001a'], ['big bazar', '#e30613'], ['wibra', '#d50032']]
-const SIGN = { width: 1024, height: 128, columns: 4 }
-const brandOf = sign => BRANDS.find(([name]) => sign.toLowerCase().includes(name))
+const SIGN = { width: 512, height: 64, columns: 8 }
+const brandOf = sign => BRANDS.find(([name]) => new RegExp(`(^|[^a-z])${name}([^a-z]|$)`).test(sign.toLowerCase()))
 
 function signAtlas(signs) {
   const rows = Math.max(1, Math.ceil(signs.length / SIGN.columns))
@@ -151,10 +153,10 @@ function signAtlas(signs) {
     ctx.fillStyle = brand && brand[2] ? brand[2] : '#fff'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    let size = 96
-    ctx.font = `900 ${size}px system-ui, sans-serif`
-    while (ctx.measureText(text).width > SIGN.width - 60 && size > 24) ctx.font = `900 ${size -= 4}px system-ui, sans-serif`
-    ctx.fillText(text, x + SIGN.width / 2, y + SIGN.height / 2 + 4)
+      let size = 48
+      ctx.font = `900 ${size}px system-ui, sans-serif`
+      while (ctx.measureText(text).width > SIGN.width - 30 && size > 14) ctx.font = `900 ${size -= 2}px system-ui, sans-serif`
+      ctx.fillText(text, x + SIGN.width / 2, y + SIGN.height / 2 + 2)
   })
   const map = new THREE.CanvasTexture(canvas)
   map.colorSpace = THREE.SRGBColorSpace
@@ -162,7 +164,7 @@ function signAtlas(signs) {
   return { map, rows }
 }
 
-const SIGNS = [...new Set(world.buildings.map(building => building.sign).filter(Boolean))].sort((a, b) => (brandOf(b) ? 1 : 0) - (brandOf(a) ? 1 : 0)).slice(0, 256)
+const SIGNS = [...new Set(world.buildings.map(building => building.sign).filter(Boolean))].sort((a, b) => (brandOf(b) ? 1 : 0) - (brandOf(a) ? 1 : 0)).slice(0, 128)
 const signs = signAtlas(SIGNS)
 MATERIALS.sign = new THREE.MeshToonMaterial({ map: signs.map, gradientMap: gradient, side: THREE.DoubleSide })
 
@@ -170,8 +172,8 @@ function signQuad(sign, cx, cz, ux, uz, nx, nz, width, bottom, height) {
   const index = SIGNS.indexOf(sign)
   if (index < 0) return null
   const column = index % SIGN.columns, row = Math.floor(index / SIGN.columns)
-  let u0 = column / SIGN.columns, u1 = (column + 1) / SIGN.columns
-  if (ux * nz - uz * nx < 0) [u0, u1] = [u1, u0]
+  const u0 = column / SIGN.columns, u1 = (column + 1) / SIGN.columns
+  if (ux * nz - uz * nx < 0) { ux = -ux; uz = -uz }
   const v1 = 1 - row / signs.rows, v0 = 1 - (row + 1) / signs.rows
   const ox = nx * 0.1, oz = nz * 0.1, half = width / 2
   const x0 = cx - ux * half + ox, z0 = cz - uz * half + oz, x1 = cx + ux * half + ox, z1 = cz + uz * half + oz
@@ -210,9 +212,8 @@ const cubic = (p0, p1, p2, p3, t) => p1 + 0.5 * t * (p2 - p0 + t * (2 * p0 - 5 *
 function terrainHeight(x, z) {
   const gx = clamp((x - T.x0) / T.sx, 0, T.cols - 1.001), gz = clamp((z - T.z0) / T.sz, 0, T.rows - 1.001)
   const i = Math.floor(gx), j = Math.floor(gz), fx = gx - i, fz = gz - j
-  const h = (c, r) => T.heights[clamp(r, 0, T.rows - 1) * T.cols + clamp(c, 0, T.cols - 1)]
-  const row = dr => cubic(h(i - 1, j + dr), h(i, j + dr), h(i + 1, j + dr), h(i + 2, j + dr), fx)
-  return cubic(row(-1), row(0), row(1), row(2), fz)
+  const h = (c, r) => T.heights[r * T.cols + c]
+  return (h(i, j) * (1 - fx) + h(i + 1, j) * fx) * (1 - fz) + (h(i, j + 1) * (1 - fx) + h(i + 1, j + 1) * fx) * fz
 }
 
 function pointToSegment(x, z, [ax, az], [bx, bz]) {
@@ -371,6 +372,22 @@ function trim(points, cutStart, cutEnd) {
   return cut(cut([...points], cutStart).reverse(), cutEnd).reverse()
 }
 
+function cutOut(points, gaps) {
+  const pieces = []
+  let piece = [], travelled = 0
+  for (let i = 0; i < points.length; i++) {
+    if (i > 0) travelled += Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1])
+    if (gaps.some(([from, to]) => travelled > from && travelled < to)) {
+      if (piece.length > 1) pieces.push(piece)
+      piece = []
+    } else {
+      piece.push(points[i])
+    }
+  }
+  if (piece.length > 1) pieces.push(piece)
+  return pieces
+}
+
 function band(points, offset, width, lift, color, parts) {
   const inner = offsetLine(points, offset, lift), outer = offsetLine(points, offset + Math.sign(offset) * width, lift)
   parts.push(paint(skirt(inner, outer), color))
@@ -413,6 +430,7 @@ function dashes(points, parts) {
 }
 
 function quad(cx, cz, ux, uz, nx, nz, width, bottom, height, color) {
+  if (ux * nz - uz * nx < 0) { ux = -ux; uz = -uz }
   const ox = nx * 0.04, oz = nz * 0.04, half = width / 2
   const x0 = cx - ux * half + ox, z0 = cz - uz * half + oz, x1 = cx + ux * half + ox, z1 = cz + uz * half + oz
   const top = bottom + height
@@ -432,6 +450,16 @@ function buildRoads(groups) {
     nodes.get(key).push(road)
   }))
   const clearance = (road, point) => Math.max(0, ...nodes.get(point.join(',')).filter(other => other !== road).map(other => other.w / 2 + 1.5))
+  const gaps = (road, extra) => {
+    let travelled = 0, index = 0
+    return road.p.flatMap((point, i) => {
+      for (; index < road.samples.length - 1 && Math.hypot(road.samples[index][0] - point[0], road.samples[index][1] - point[1]) > 2.5; index++) {
+        travelled += Math.hypot(road.samples[index + 1][0] - road.samples[index][0], road.samples[index + 1][1] - road.samples[index][1])
+      }
+      const cut = clearance(road, point)
+      return cut ? [[travelled - cut - extra, travelled + cut + extra]] : []
+    })
+  }
 
   world.roads.forEach(road => {
     const points = road.samples
@@ -440,18 +468,22 @@ function buildRoads(groups) {
     } else if (road.kind === 'path') {
       strip(road, Math.min(road.w, 1.5), 0.12, COLORS.path, groups.paving)
     } else {
-      strip(road, road.w, 0.18, COLORS.road, groups.asphalt)
-      if (road.w >= 4 && road.w <= 8 && !road.elevated) {
-        const walk = trim(points, clearance(road, road.p[0]), clearance(road, road.p[road.p.length - 1]))
-        for (const side of [-1, 1]) {
-          const inner = band(walk, side * (road.w / 2 + 0.05), 1.5, 0.3, COLORS.sidewalk, groups.paving)
-          groups.plain.push(paint(skirt(inner, inner.map(([x, y, z]) => [x, y - 0.14, z])), COLORS.curb))
-        }
+      strip(road, road.w, 0.22, COLORS.road, groups.asphalt)
+      if (road.w >= 5 && road.w <= 8 && !road.elevated) {
+        cutOut(points, gaps(road, 0)).forEach(walk => {
+          for (const side of [-1, 1]) {
+            const inner = band(walk, side * (road.w / 2 + 0.05), 1.5, 0.26, COLORS.sidewalk, groups.paving)
+            groups.plain.push(paint(skirt(inner, inner.map(([x, y, z]) => [x, y - 0.1, z])), COLORS.curb))
+            const outer = offsetLine(walk, side * (road.w / 2 + 1.55), 0.26)
+            groups.plain.push(paint(skirt(outer, outer.map(([x, , z]) => [x, terrainHeight(x, z) - 0.05, z])), COLORS.curb))
+          }
+        })
       }
       if (road.w >= 7 || road.dual) {
-        const marks = trim(points, clearance(road, road.p[0]) + 2, clearance(road, road.p[road.p.length - 1]) + 2)
-        if (!road.dual) dashes(marks, groups.plain)
-        for (const side of [-1, 1]) band(marks, side * (road.w / 2 - 0.35), 0.12, 0.2, COLORS.dash, groups.plain)
+        cutOut(points, gaps(road, 3)).forEach(marks => {
+          if (!road.dual) dashes(marks, groups.plain)
+          for (const side of [-1, 1]) band(marks, side * (road.w / 2 - 0.35), 0.12, 0.2, COLORS.dash, groups.plain)
+        })
       }
       if (road.bridge) bridge(points, road.w, groups.plain)
       else if (road.elevated) embankment(points, road.w, groups.ground)
@@ -523,21 +555,6 @@ function hipRoof(building, groups) {
   groups.plain.push(paint(new THREE.BoxGeometry(0.6, rise + 0.8, 0.6).translate(chimneyX, top + (rise + 0.8) / 2, chimneyZ), COLORS.chimney))
 }
 
-function roofSign(building, signParts) {
-  const points = building.p
-  let angle = 0, longest = 0
-  points.forEach(([x, z], i) => {
-    const [nx, nz] = points[(i + 1) % points.length]
-    const length = Math.hypot(nx - x, nz - z)
-    if (length > longest) { longest = length; angle = Math.atan2(nz - z, nx - x) }
-  })
-  if (longest < 14) return
-  const cx = points.reduce((sum, p) => sum + p[0], 0) / points.length, cz = points.reduce((sum, p) => sum + p[1], 0) / points.length
-  const ux = Math.cos(angle), uz = Math.sin(angle), nx = uz, nz = -ux
-  const sign = signQuad(building.sign, cx, cz, ux, uz, nx, nz, Math.min(longest * 0.7, 24), building.base + building.h + 0.6, 3)
-  if (sign) signParts.push(sign)
-}
-
 function facadeDetails(building, parts, signParts) {
   const points = building.p
   const floors = Math.max(1, Math.floor((building.h - 2.3) / 3) + 1)
@@ -553,9 +570,14 @@ function facadeDetails(building, parts, signParts) {
     if (inside(points, mx + nx * 0.5, mz + nz * 0.5)) { nx = -nx; nz = -nz }
 
     const brand = building.sign && brandOf(building.sign)
-    if (building.sign && building.h >= 3 && length >= 4 && (i === front || (brand && length >= 10 && roadDistance(mx, mz) < 40))) {
-      const height = brand || building.h >= 6 ? 2.6 : 1.6
-      const sign = signQuad(building.sign, mx, mz, ux, uz, nx, nz, Math.min(length - 0.8, brand ? 24 : 14), building.base + building.h - height - 0.3, height)
+    if (brand && building.h >= 3 && length >= 6) {
+      const slots = Math.max(1, Math.floor(length / 10)), step = length / slots
+      for (let k = 0; k < slots; k++) {
+        const sign = signQuad(building.sign, ax + ux * step * (k + 0.5), az + uz * step * (k + 0.5), ux, uz, nx, nz, Math.min(8, step - 1), building.base + building.h - 2.5, 2.2)
+        if (sign) signParts.push(sign)
+      }
+    } else if (building.sign && building.h >= 3 && length >= 4 && i === front) {
+      const sign = signQuad(building.sign, mx, mz, ux, uz, nx, nz, Math.min(length - 0.8, 14), building.base + building.h - 1.9, 1.6)
       if (sign) signParts.push(sign)
     }
 
@@ -563,7 +585,7 @@ function facadeDetails(building, parts, signParts) {
     const spacing = length / (count + 1)
     for (let k = 1; k <= count; k++) {
       const cx = ax + ux * spacing * k, cz = az + uz * spacing * k
-      for (let floor = 0; floor < floors; floor++) {
+      for (let floor = 0; floor < (brand ? 1 : floors); floor++) {
         if (i === front && floor === 0 && k === 1 && building.h >= 3) parts.push(quad(cx, cz, ux, uz, nx, nz, 1.0, terrainHeight(cx, cz), 2.2 + building.base - terrainHeight(cx, cz), COLORS.door))
         else parts.push(quad(cx, cz, ux, uz, nx, nz, 1.1, building.base + floor * 3 + 1, 1.3, COLORS.glass))
       }
@@ -590,7 +612,7 @@ function buildBuildings(groups) {
     groups.brick.push(paint(new THREE.ExtrudeGeometry(shape, { depth: building.base + building.h - bottom, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, bottom, 0), COLORS.walls[building.c]))
     if (building.roof === 'hip') hipRoof(building, groups)
     facadeDetails(building, groups.plain, groups.sign)
-    if (building.sign && brandOf(building.sign) && building.roof === 'flat') roofSign(building, groups.sign)
+
   })
 }
 
@@ -606,7 +628,7 @@ function buildGround() {
         areaGrid.get(key).push(i)
       }
   })
-  const segments = Math.round(TILE / Math.min(T.sx, T.sz, 10))
+  const segments = Math.round(TILE / Math.min(T.sx, T.sz, 10)) * 2
   for (let tx = minX; tx < maxX; tx += TILE) for (let tz = minZ; tz < maxZ; tz += TILE) {
     const width = Math.min(TILE, maxX - tx), depth = Math.min(TILE, maxZ - tz)
     const geometry = new THREE.PlaneGeometry(width, depth, segments, segments).rotateX(-Math.PI / 2).translate(tx + width / 2, 0, tz + depth / 2)
@@ -850,7 +872,7 @@ function labradoodleGeometry() {
 const KINDS = {
   beagle:    { geometry: beagleGeometry,    label: 'Beagle',              bob: 0.05, speed: () => random() < 0.25 ? 0 : 0.6 + random() * 1.2 },
   baldman:   { geometry: baldManGeometry,   label: 'Kale man',            bob: 0.03, speed: () => random() < 0.3 ? 0 : 0.8 + random() * 0.6 },
-  dogwalker:   { geometry: dogWalkerGeometry,   label: 'Gerard',              bob: 0, speed: () => 0 },
+  dogwalker:   { geometry: dogWalkerGeometry,   label: 'Niet poep oprapende labradoodle uitlater', bob: 0, speed: () => 0 },
   labradoodle: { geometry: labradoodleGeometry, label: 'Labradoodle',         bob: 0.08, speed: () => 0 },
   tattooman:   { geometry: tattooManGeometry,   label: 'Getatoeëerde kale man', bob: 0, speed: () => 0 }
 }
@@ -960,13 +982,15 @@ function runOver(walker) {
     if (dog) { dog.panic = 6; dog.timer = 0 }
     state.blood = 45
     state.bloodAt = [state.x, state.z]
-  streetEl.textContent = 'Gerard overreden: +1 G-punt'
+  streetEl.textContent = 'Niet poep oprapende labradoodle uitlater overreden: +1 G-Point'
   awardCoin(walker.x, walker.z)
 }
 
 const coinsEl = document.getElementById('coins')
-const coinMaterial = new THREE.MeshToonMaterial({ color: 0xffc233, gradientMap: gradient })
-const coinGeometry = new THREE.CylinderGeometry(0.45, 0.45, 0.08, 16).rotateX(Math.PI / 2)
+const coinFace = new THREE.TextureLoader().load('assets/gcoin.jpg')
+coinFace.colorSpace = THREE.SRGBColorSpace
+const coinMaterial = [new THREE.MeshToonMaterial({ color: 0xffc233, gradientMap: gradient }), new THREE.MeshToonMaterial({ map: coinFace, gradientMap: gradient }), new THREE.MeshToonMaterial({ map: coinFace, gradientMap: gradient })]
+const coinGeometry = new THREE.CylinderGeometry(0.6, 0.6, 0.1, 24).rotateX(Math.PI / 2)
 const coins = []
 let gpunten = Number(localStorage.getItem('gpunten') || 0)
 coinsEl.querySelector('span').textContent = gpunten.toLocaleString('nl-NL')
@@ -1022,7 +1046,7 @@ function combo(walker) {
   walker.deadAt = performance.now()
   state.blood = 45
   state.bloodAt = [state.x, state.z]
-  streetEl.textContent = walker.stage === 1 ? 'Achteruit over Gerard: +½ G-punt' : 'En nog eens vooruit: +½ G-punt'
+  streetEl.textContent = walker.stage === 1 ? 'Achteruit over de uitlater: +½ G-Point' : 'En nog eens vooruit: +½ G-Point'
   awardCoin(walker.x, walker.z, 0.5)
 }
 
@@ -1174,7 +1198,8 @@ function drawMinimap(dt) {
     map.stroke()
   }
   world.roads.filter(near).forEach(road => {
-    if (road.kind === 'water') stroke(road, '#4f9fd6', Math.max(road.w, 4))
+        if (road.kind === 'water') stroke(road, '#4f9fd6', Math.max(road.w, 4))
+        else if (road.kind === 'road' && road.w < 5) stroke(road, '#8d9096', 4)
     else if (road.kind === 'road') stroke(road, road.elevated ? '#8a8d90' : '#5a5d63', Math.max(road.w + 2, 6))
   })
   map.fillStyle = '#6b6259'
@@ -1275,7 +1300,7 @@ function travelTo(name) {
 travelList.addEventListener('click', event => { const item = event.target.closest('li'); if (item) travelTo(item.dataset.name) })
 
 const keys = new Set()
-window.debug = { keys, walkers, travelTo, get state() { return state } }
+window.debug = { keys, walkers, travelTo, SIGNS, signs, camera, scene, MATERIALS, get state() { return state } }
 addEventListener('keydown', event => {
   if (event.code === 'Escape' && !travel.hidden) return toggleTravel(false)
   if (event.code === 'KeyT' && !/INPUT|TEXTAREA/.test(event.target.tagName)) return toggleTravel()
