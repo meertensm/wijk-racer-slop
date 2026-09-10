@@ -1919,21 +1919,30 @@ const SAMPLE_SETS = { scream: 4, zombie: 3, bark: 2 }
 function loadSample(name) {
   if (samples.has(name)) return samples.get(name)
   const promise = fetch(`assets/sounds/${name}.mp3`).then(response => response.ok ? response.arrayBuffer() : null)
-    .then(data => data && audio ? audio.decodeAudioData(data) : null).catch(() => null)
+    .then(data => data && audio ? audio.decodeAudioData(data) : null).then(normalize).catch(() => null)
   samples.set(name, promise)
   return promise
 }
 
-async function playSample(name, { level = 1, loop = false, out } = {}) {
+function normalize(buffer) {
+  if (!buffer) return null
+  let peak = 0
+  for (let c = 0; c < buffer.numberOfChannels; c++) buffer.getChannelData(c).forEach(v => { peak = Math.max(peak, Math.abs(v)) })
+  if (peak > 0 && peak < 0.8) for (let c = 0; c < buffer.numberOfChannels; c++) { const data = buffer.getChannelData(c); for (let i = 0; i < data.length; i++) data[i] *= 0.8 / peak }
+  return buffer
+}
+
+async function playSample(name, { level = 1, loop = false, out, from = 0, to = 0 } = {}) {
   if (!audio) return null
   const buffer = await loadSample(name)
   if (!buffer) return null
   const source = audio.createBufferSource(), gain = audio.createGain()
   source.buffer = buffer
   source.loop = loop
+  if (to) { source.loopStart = from; source.loopEnd = to }
   gain.gain.value = level
   source.connect(gain).connect(out || sfx || audio.destination)
-  source.start()
+  source.start(0, from)
   return { source, gain }
 }
 
@@ -2105,7 +2114,7 @@ function updateEngine() {
   const braking = (keys.has('ShiftLeft') || keys.has('ShiftRight')) && speed > 3
   if (braking && !screech) {
     screech = { gain: audio.createGain(), voices: [], stop: () => {} }
-    playSample('brake', { loop: true, level: 0.2 }).then(track => { if (track) { screech.sampled = track; screech.stop = () => track.source.stop() } else { screech = null; synthSqueal() } })
+    playSample('brake', { loop: true, level: 0.2, from: 3, to: 14 }).then(track => { if (track) { screech.sampled = track; screech.stop = () => track.source.stop() } else { screech = null; synthSqueal() } })
     return
   }
   function synthSqueal() {
@@ -2145,7 +2154,7 @@ function updateEngine() {
     screech = { stop: () => { voices.forEach(v => v.stop()); noise.stop(); wobble.stop() }, gain, voices }
   }
   if (screech) {
-    const level = braking ? Math.min(0.16, 0.05 + speed / 100) : 0
+    const level = braking ? Math.min(0.4, 0.12 + speed / 60) : 0
     ;(screech.sampled ? screech.sampled.gain : screech.gain).gain.setTargetAtTime(level, audio.currentTime, braking ? 0.06 : 0.1)
     screech.voices.forEach((osc, i) => osc.frequency.setTargetAtTime((i ? 2790 : 1850) * (1 + (30 - Math.min(speed, 30)) / 120), audio.currentTime, 0.1))
     if (!braking) {
