@@ -17,6 +17,11 @@ const TIPS = [
   'Shift is de handrem. De Panda haalt 150 op de A2.',
   'Het terrein is echt: AHN-hoogtedata, het Julianakanaal ligt hoger dan Urmond.'
 ]
+let audio, hardstyle, nextBeat = 0, beat = 0, engine, engineGain, sfx, metal, metalTimer, metalBeat = 0, metalNext = 0
+const RIFF = [[82.41, 1], [82.41, 1], [82.41, 0], [98, 1], [82.41, 1], [82.41, 0], [110, 1], [110, 1], [82.41, 1], [82.41, 0], [82.41, 1], [73.42, 1], [82.41, 1], [82.41, 0], [98, 1], [110, 1]]
+const NOTES = [220, 261.6, 329.6, 392, 329.6, 261.6, 220, 196]
+const CURSES = ['Godverdomme, kijk uit!', 'Hé, klootzak!', 'Mijn hond!', 'Wat doe je nou, eikel!', 'Ben je helemaal gek geworden!', 'Sjongejonge!']
+addEventListener('keydown', () => startMetal(), { once: true })
 const loadingEl = document.getElementById('loading')
 const loadingBar = loadingEl.querySelector('#loading-bar i')
 const loadingPhase = document.getElementById('loading-phase')
@@ -326,6 +331,23 @@ function terrainHeight(x, z) {
   const i = Math.floor(gx), j = Math.floor(gz), fx = gx - i, fz = gz - j
   const h = (c, r) => T.heights[r * T.cols + c]
   return (h(i, j) * (1 - fx) + h(i + 1, j) * fx) * (1 - fz) + (h(i, j + 1) * (1 - fx) + h(i + 1, j + 1) * fx) * fz
+}
+
+function rasterize(polygon, raster, value, keepExisting = false) {
+  const zs = polygon.map(p => p[1])
+  const r0 = clamp(Math.ceil((Math.min(...zs) - T.z0) / T.sz), 0, T.rows - 1), r1 = clamp(Math.floor((Math.max(...zs) - T.z0) / T.sz), 0, T.rows - 1)
+  for (let r = r0; r <= r1; r++) {
+    const z = T.z0 + r * T.sz, crossings = []
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const [ax, az] = polygon[i], [bx, bz] = polygon[j]
+      if ((az > z) !== (bz > z)) crossings.push(ax + (z - az) / (bz - az) * (bx - ax))
+    }
+    crossings.sort((a, b) => a - b)
+    for (let k = 0; k + 1 < crossings.length; k += 2) {
+      const c0 = clamp(Math.ceil((crossings[k] - T.x0) / T.sx), 0, T.cols - 1), c1 = clamp(Math.floor((crossings[k + 1] - T.x0) / T.sx), 0, T.cols - 1)
+      for (let c = c0; c <= c1; c++) if (!keepExisting || !raster[r * T.cols + c]) raster[r * T.cols + c] = value
+    }
+  }
 }
 
 function pointToSegment(x, z, [ax, az], [bx, bz]) {
@@ -925,11 +947,7 @@ function buildGround() {
   const KINDS_BY_INDEX = ['ground', 'grass', 'forest', 'field', 'water', 'parking', 'lot']
   world.areas.forEach(area => {
     const kind = KINDS_BY_INDEX.indexOf(area.kind)
-    if (kind < 0) return
-    const xs = area.p.map(p => p[0]), zs = area.p.map(p => p[1])
-    const c0 = clamp(Math.floor((Math.min(...xs) - T.x0) / T.sx), 0, T.cols - 1), c1 = clamp(Math.ceil((Math.max(...xs) - T.x0) / T.sx), 0, T.cols - 1)
-    const r0 = clamp(Math.floor((Math.min(...zs) - T.z0) / T.sz), 0, T.rows - 1), r1 = clamp(Math.ceil((Math.max(...zs) - T.z0) / T.sz), 0, T.rows - 1)
-    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (inside(area.p, T.x0 + c * T.sx, T.z0 + r * T.sz)) kinds[r * T.cols + c] = kind
+    if (kind > 0) rasterize(area.p, kinds, kind)
   })
   const kindAt = (x, z) => KINDS_BY_INDEX[kinds[clamp(Math.round((z - T.z0) / T.sz), 0, T.rows - 1) * T.cols + clamp(Math.round((x - T.x0) / T.sx), 0, T.cols - 1)]]
   const segments = Math.round(TILE / Math.min(T.sx, T.sz, 10))
@@ -1062,11 +1080,13 @@ function buildCar() {
   car.rotation.order = 'YXZ'
   const part = (w, h, d, color, x, y, z) => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), solid(color))
-    mesh.position.set(x, y, z)
-    mesh.castShadow = true
-    car.add(mesh)
-    return mesh
-  }
+      mesh.position.set(x, y, z)
+      mesh.castShadow = true
+        car.add(mesh)
+        mesh.userData.position = mesh.position.clone()
+        mesh.userData.rotation = mesh.rotation.clone()
+        return mesh
+      }
   const body = 0xefe6cf, glass = 0x2b3a4a, plastic = 0x3a3a3a
 
   bodyParts.push(part(1.46, 0.5, 3.38, body, 0, 0.6, 0), part(1.42, 0.6, 2.4, body, 0, 1.15, -0.45))
@@ -1080,6 +1100,7 @@ function buildCar() {
   }
   part(1.3, 0.42, 0.02, glass, 0, 1.2, -1.66)
   part(1.3, 0.5, 0.02, glass, 0, 1.17, 0.7).rotation.x = -0.4
+  car.children.forEach(mesh => { mesh.userData.rotation = mesh.rotation.clone() })
 
   for (const x of [-0.5, 0.5]) {
     part(0.34, 0.16, 0.04, 0xfff3c4, x, 0.72, 1.7)
@@ -1095,6 +1116,8 @@ function buildCar() {
       mesh.position.set(x, 0.28, z)
       mesh.castShadow = true
       car.add(mesh)
+      mesh.userData.position = mesh.position.clone()
+      mesh.userData.rotation = mesh.rotation.clone()
     }
   }
   scene.add(car)
@@ -1269,12 +1292,7 @@ function buildWalkers() {
   })
   const zones = world.zones || []
   const zoneRaster = new Uint8Array(T.cols * T.rows)
-  zones.forEach((zone, index) => {
-    const xs = zone.p.map(p => p[0]), zs = zone.p.map(p => p[1])
-    const c0 = clamp(Math.floor((Math.min(...xs) - T.x0) / T.sx), 0, T.cols - 1), c1 = clamp(Math.ceil((Math.max(...xs) - T.x0) / T.sx), 0, T.cols - 1)
-    const r0 = clamp(Math.floor((Math.min(...zs) - T.z0) / T.sz), 0, T.rows - 1), r1 = clamp(Math.ceil((Math.max(...zs) - T.z0) / T.sz), 0, T.rows - 1)
-    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (!zoneRaster[r * T.cols + c] && inside(zone.p, T.x0 + c * T.sx, T.z0 + r * T.sz)) zoneRaster[r * T.cols + c] = index + 1
-  })
+  zones.forEach((zone, index) => rasterize(zone.p, zoneRaster, index + 1, true))
   const zoneOf = ([x, z]) => zones[zoneRaster[clamp(Math.round((z - T.z0) / T.sz), 0, T.rows - 1) * T.cols + clamp(Math.round((x - T.x0) / T.sx), 0, T.cols - 1)] - 1]
   const fromStart = ([x, z]) => Math.hypot(x - world.start.x, z - world.start.z)
   const candidates = spots.sort(() => random() - 0.5).filter(spot => fromStart(spot) > 30 && !blocked(...spot))
@@ -1601,7 +1619,29 @@ function explode(label) {
   state.shake = 3
   thud(1.5)
   streetEl.textContent = `BOEM! ${label} geraakt`
-  setTimeout(() => location.reload(), 2500)
+  setTimeout(respawn, 2500)
+}
+
+function respawn() {
+  if (!explosion) return
+  scene.remove(explosion.fireball)
+  explosion.debris.forEach(({ mesh }) => {
+    car.add(mesh)
+    mesh.position.copy(mesh.userData.position)
+    mesh.rotation.copy(mesh.userData.rotation)
+  })
+  explosion = null
+  state.speed = 0
+  state.shake = 0
+  state.dirt = 0
+  dirty(0)
+  walkers.forEach(walker => {
+    if (walker.dead || Math.hypot(walker.x - state.x, walker.z - state.z) > 6) return
+    walker.x += Math.cos(state.heading) * 12
+    walker.z -= Math.sin(state.heading) * 12
+    walker.home = [walker.x, walker.z]
+  })
+  streetEl.textContent = 'Nieuwe Panda'
 }
 
 function updateExplosion(dt) {
@@ -1767,12 +1807,7 @@ index(world.buildings, building => {
   return [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)]
 })
 const waste = new Uint8Array(T.cols * T.rows)
-;(world.zones || []).filter(zone => zone.kind.includes('zombie')).forEach(zone => {
-  const xs = zone.p.map(p => p[0]), zs = zone.p.map(p => p[1])
-  const c0 = clamp(Math.floor((Math.min(...xs) - T.x0) / T.sx), 0, T.cols - 1), c1 = clamp(Math.ceil((Math.max(...xs) - T.x0) / T.sx), 0, T.cols - 1)
-  const r0 = clamp(Math.floor((Math.min(...zs) - T.z0) / T.sz), 0, T.rows - 1), r1 = clamp(Math.ceil((Math.max(...zs) - T.z0) / T.sz), 0, T.rows - 1)
-  for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (inside(zone.p, T.x0 + c * T.sx, T.z0 + r * T.sz)) waste[r * T.cols + c] = 1
-})
+;(world.zones || []).filter(zone => zone.kind.includes('zombie')).forEach(zone => rasterize(zone.p, waste, 1))
 const wasteAt = (x, z) => waste[clamp(Math.round((z - T.z0) / T.sz), 0, T.rows - 1) * T.cols + clamp(Math.round((x - T.x0) / T.sx), 0, T.cols - 1)] === 1
 const DEAD = new THREE.Color(0x8a7f66)
 await phase('terrain', () => { smoothTerrain(); digWater() })
@@ -1785,8 +1820,7 @@ await phase('walkers', buildWalkers)
 
 // METAL INTRO:
 
-let metal, metalTimer, metalBeat = 0, metalNext = 0
-const RIFF = [[82.41, 1], [82.41, 1], [82.41, 0], [98, 1], [82.41, 1], [82.41, 0], [110, 1], [110, 1], [82.41, 1], [82.41, 0], [82.41, 1], [73.42, 1], [82.41, 1], [82.41, 0], [98, 1], [110, 1]]
+
 
 function startMetal() {
   if (metal || !loadingEl.isConnected) return
@@ -1843,8 +1877,8 @@ function noiseBurst(time, length, filterType, frequency, level, out) {
   source.start(time)
 }
 
-const snare = (time, out) => noiseBurst(time, 0.18, 'bandpass', 1800, 0.7, out)
-const hihat = (time, out) => noiseBurst(time, 0.05, 'highpass', 7000, 0.25, out)
+function snare(time, out) { noiseBurst(time, 0.18, 'bandpass', 1800, 0.7, out) }
+function hihat(time, out) { noiseBurst(time, 0.05, 'highpass', 7000, 0.25, out) }
 
 function stopMetal() {
   if (!metal) return
@@ -1853,12 +1887,11 @@ function stopMetal() {
   setTimeout(() => metal.disconnect(), 2000)
 }
 
-addEventListener('keydown', startMetal, { once: true })
+
 
 // HARDSTYLE:
 
-let audio, hardstyle, nextBeat = 0, beat = 0
-const NOTES = [220, 261.6, 329.6, 392, 329.6, 261.6, 220, 196]
+
 
 function startAudio() {
   if (audio) return
@@ -1907,8 +1940,7 @@ function lead(time, frequency, out) {
   osc.stop(time + 0.32)
 }
 
-let engine, engineGain, sfx
-const CURSES = ['Godverdomme, kijk uit!', 'Hé, klootzak!', 'Mijn hond!', 'Wat doe je nou, eikel!', 'Ben je helemaal gek geworden!', 'Sjongejonge!']
+
 
 function startSfx() {
   sfx = audio.createGain()
@@ -2052,7 +2084,7 @@ function travelTo(name) {
 travelList.addEventListener('click', event => { const item = event.target.closest('li'); if (item) travelTo(item.dataset.name) })
 
 const keys = new Set()
-window.debug = { keys, walkers, travelTo, dropPoop, poops, SIGNS, signs, camera, scene, MATERIALS, get state() { return state } }
+window.debug = { keys, walkers, travelTo, dropPoop, poops, SIGNS, signs, camera, scene, MATERIALS, respawn, get explosion() { return explosion }, get audio() { return audio }, get metal() { return metal }, get state() { return state } }
 addEventListener('keydown', event => {
   if (event.code === 'Escape' && !travel.hidden) return toggleTravel(false)
   if (event.code === 'KeyT' && !/INPUT|TEXTAREA/.test(event.target.tagName)) return toggleTravel()
