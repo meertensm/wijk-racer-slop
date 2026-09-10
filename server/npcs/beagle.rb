@@ -5,6 +5,8 @@ class Beagle < Npc
   PAUSE = 3
 
   def chatty?(game)
+    return false
+
     rand < 0.04 && game.nearest_player(x, z, 60)
   end
 

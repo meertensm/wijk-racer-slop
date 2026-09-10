@@ -22,6 +22,7 @@ class Npc < Entity
     @dead    = false
     @voice   = Voice.new(self.class::GENDERS.sample(random: random), self.class::MOODS.sample(random: random))
     @chatted = -100.0
+    @quiet_until = 0.0
   end
 
   def kind
@@ -55,11 +56,13 @@ class Npc < Entity
     rand < 0.02 && game.nearest_player(x, z, 40)
   end
 
-  def say(game)
+  def say(game, interrupt = false)
     lines = game.lines_for(self)
-    return if lines.empty?
-    @chatted = game.now
-    game.say(self, (rand * lines.length).floor)
+    return if lines.empty? || (!interrupt && game.now < @quiet_until)
+    index        = (rand * lines.length).floor
+    @chatted     = game.now
+    @quiet_until = game.now + 0.6 + lines[index].split.length * 0.4
+    game.say(self, index)
   end
 
   def decide(_game)
@@ -94,7 +97,7 @@ class Npc < Entity
     touch
     game.kill(self, player)
     @chatted = -100.0
-    say(game)
+    say(game, true)
   end
 
   def revive

@@ -2286,9 +2286,17 @@ async function speak(npc, index) {
   const gender = npc.voice & 2 ? 'female' : 'male', mood = npc.voice & 1 ? 'happy' : 'angry'
   const lines = VOICES.npcs[npc.kind]?.[mood] || []
   if (!lines[index]) return
-  if (await playSample(`voice-${npc.kind}-${gender}-${mood}-${index + 1}`, { level: 1.2 })) return
+  hush(npc)
+  const track = await playSample(`voice-${npc.kind}-${gender}-${mood}-${index + 1}`, { level: 1.2 })
+  if (track) {
+    npc.talking = track
+    track.source.onended = () => { if (npc.talking === track) npc.talking = null }
+    return
+  }
   if (!('speechSynthesis' in window)) return
   const line = new SpeechSynthesisUtterance(lines[index])
+  npc.talking = line
+  line.onend = () => { if (npc.talking === line) npc.talking = null }
   line.lang = 'nl-NL'
   line.rate = mood === 'angry' ? 1.2 + Math.random() * 0.15 : 1
   line.pitch = (gender === 'female' ? 1.3 : npc.kind === 'speakerboy' ? 1.6 : 0.7) + (mood === 'happy' ? 0.2 : 0)
@@ -2296,6 +2304,14 @@ async function speak(npc, index) {
   const voice = speechSynthesis.getVoices().find(v => v.lang.startsWith('nl'))
   if (voice) line.voice = voice
   speechSynthesis.speak(line)
+}
+
+function hush(npc) {
+  const talking = npc.talking
+  npc.talking = null
+  if (!talking) return
+  if (talking.source) talking.source.stop()
+  else speechSynthesis.cancel()
 }
 
 function updateHardstyle() {
