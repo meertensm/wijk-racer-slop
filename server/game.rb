@@ -67,7 +67,11 @@ class Game
     loop do
       time = clock
       @now = time
-      step(time - last)
+      begin
+        step(time - last)
+      rescue StandardError => error
+        warn "#{error.class}: #{error.message}\n  #{error.backtrace.first(3).join("\n  ")}"
+      end
       last = time
       sleep [TICK - (clock - time), 0].max
     end
