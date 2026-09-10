@@ -2371,6 +2371,8 @@ const playersEl = document.getElementById('players')
 const others = new Map()
 let socket, lastSent = 0
 const myName = () => (nameInput.value || '').trim().slice(0, 16) || 'Panda'
+nameInput.addEventListener('keydown', event => { if (event.code === 'Enter' || event.code === 'Escape') nameInput.blur(); event.stopPropagation() })
+nameInput.addEventListener('change', () => { localStorage.setItem('playerName', myName()); renderPlayers() })
 
 function nameLabel(text) {
   const canvas = document.createElement('canvas')
@@ -2631,6 +2633,7 @@ await Promise.all(streamRoadTiles(0, 1))
 console.info(`ready: ${Math.round(performance.now())} ms`)
 clearInterval(slideTimer)
 stopMetal()
+nameInput.blur()
 connectMultiplayer()
 renderPlayers()
 loadingEl.classList.add('done')
