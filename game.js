@@ -2090,6 +2090,7 @@ function startSfx() {
   engine.connect(filter).connect(engineGain).connect(sfx)
   engine.start()
   playSample('engine', { loop: true, level: 0 }).then(track => { engineSample = track })
+  ;['brake', 'crash', ...Object.entries(SAMPLE_SETS).flatMap(([set, count]) => Array.from({ length: count }, (_, i) => `${set}${i + 1}`))].forEach(loadSample)
 }
 
 let wasGas = false, blipUntil = 0, screech = null
@@ -2113,8 +2114,13 @@ function updateEngine() {
   }
   const braking = (keys.has('ShiftLeft') || keys.has('ShiftRight')) && speed > 3
   if (braking && !screech) {
-    screech = { gain: audio.createGain(), voices: [], stop: () => {} }
-    playSample('brake', { loop: true, level: 0.2, from: 3, to: 14 }).then(track => { if (track) { screech.sampled = track; screech.stop = () => track.source.stop() } else { screech = null; synthSqueal() } })
+    const current = screech = { gain: audio.createGain(), voices: [], stop: () => {} }
+    playSample('brake', { loop: true, level: 0.2, from: 3, to: 14 }).then(track => {
+      if (!track) { if (screech === current) { screech = null; synthSqueal() }; return }
+      current.sampled = track
+      current.stop = () => track.source.stop()
+      if (screech !== current) current.stop()
+    })
     return
   }
   function synthSqueal() {
@@ -2591,7 +2597,7 @@ function travelTo(name) {
 travelList.addEventListener('click', event => { const item = event.target.closest('li'); if (item) travelTo(item.dataset.name) })
 
 const keys = new Set()
-window.debug = { keys, npcs, poops, others, travelTo, SIGNS, signs, camera, scene, MATERIALS, respawn, unstick, applySnapshot, applyFrame, EVENTS, get socket() { return socket }, get myId() { return myId }, get engineSample() { return engineSample }, get hardstyleSampled() { return hardstyleSampled }, get explosion() { return explosion }, get audio() { return audio }, get metal() { return metal }, get state() { return state } }
+window.debug = { keys, npcs, poops, others, travelTo, SIGNS, signs, camera, scene, MATERIALS, respawn, unstick, applySnapshot, applyFrame, EVENTS, get socket() { return socket }, get myId() { return myId }, get engineSample() { return engineSample }, get screech() { return screech }, get hardstyleSampled() { return hardstyleSampled }, get explosion() { return explosion }, get audio() { return audio }, get metal() { return metal }, get state() { return state } }
 addEventListener('keydown', event => {
   if (event.code === 'Escape' && !travel.hidden) return toggleTravel(false)
   if (event.code === 'Escape' && !/INPUT|TEXTAREA/.test(event.target.tagName)) return toggleBigMap()
