@@ -164,10 +164,10 @@ let seed = 7
 const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647
 const grey = (value, alpha = 1) => `rgba(${value | 0},${value | 0},${value | 0},${alpha})`
 
-function texture(metresPerTile, draw) {
+function texture(metresPerTile, draw, size = 512) {
   const canvas = document.createElement('canvas')
-  canvas.width = canvas.height = 256
-  draw(canvas.getContext('2d'), 256)
+  canvas.width = canvas.height = size
+  draw(canvas.getContext('2d'), size)
   const map = new THREE.CanvasTexture(canvas)
   map.wrapS = map.wrapT = THREE.RepeatWrapping
   map.repeat.set(1 / metresPerTile, 1 / metresPerTile)
@@ -186,26 +186,110 @@ function speckle(ctx, size, base, spread, count, blob) {
   }
 }
 
-const TEXTURES = {
-  grass:   texture(6, (ctx, size) => { speckle(ctx, size, 205, 70, 1500, 14); speckle(ctx, size, 205, 90, 3000, 2) }),
-  asphalt: texture(3, (ctx, size) => { speckle(ctx, size, 210, 40, 400, 30); speckle(ctx, size, 210, 90, 6000, 2) }),
-  foliage: texture(1, (ctx, size) => speckle(ctx, size, 200, 110, 1500, 12)),
-  paving: texture(1.2, (ctx, size) => {
-    ctx.fillStyle = grey(170)
-    ctx.fillRect(0, 0, size, size)
-    for (let x = 0; x < size; x += 64) for (let y = 0; y < size; y += 64) {
-      ctx.fillStyle = grey(200 + (random() - 0.5) * 24)
-      ctx.fillRect(x + 2, y + 2, 60, 60)
+function grain(ctx, size, base, spread, count, blob, alpha = 0.6) {
+  for (let i = 0; i < count; i++) {
+    ctx.fillStyle = grey(base + (random() - 0.5) * spread, alpha)
+    const radius = blob * (0.5 + random())
+    ctx.fillRect(random() * size, random() * size, radius, radius)
+  }
+}
+
+function cracks(ctx, size, count, shade) {
+  ctx.strokeStyle = grey(shade, 0.7)
+  for (let i = 0; i < count; i++) {
+    let x = random() * size, y = random() * size, angle = random() * Math.PI * 2
+    ctx.lineWidth = 1 + random() * 1.5
+    ctx.beginPath()
+    ctx.moveTo(x, y)
+    for (let k = 0; k < 10; k++) {
+      angle += (random() - 0.5) * 1.4
+      x += Math.cos(angle) * 12
+      y += Math.sin(angle) * 12
+      ctx.lineTo(x, y)
     }
+    ctx.stroke()
+  }
+}
+
+function blades(ctx, size, count) {
+  for (let i = 0; i < count; i++) {
+    const x = random() * size, y = random() * size, height = 5 + random() * 12, lean = (random() - 0.5) * 6
+    ctx.strokeStyle = grey(140 + random() * 115, 0.85)
+    ctx.lineWidth = 1 + random() * 1.2
+    ctx.beginPath()
+    ctx.moveTo(x, y)
+    ctx.quadraticCurveTo(x + lean / 2, y - height / 2, x + lean, y - height)
+    ctx.stroke()
+  }
+}
+
+const TEXTURES = {
+  grass: texture(6, (ctx, size) => {
+    speckle(ctx, size, 195, 50, 500, 48)
+    for (let i = 0; i < 60; i++) {
+      ctx.fillStyle = grey(130 + random() * 50, 0.3)
+      ctx.beginPath()
+      ctx.ellipse(random() * size, random() * size, 12 + random() * 40, 8 + random() * 18, random() * 3, 0, 7)
+      ctx.fill()
+    }
+    blades(ctx, size, 14000)
+  }),
+  asphalt: texture(3, (ctx, size) => {
+    speckle(ctx, size, 200, 24, 200, 60)
+    grain(ctx, size, 200, 120, 30000, 2, 0.7)
+    for (let i = 0; i < 8; i++) {
+      ctx.fillStyle = grey(170 + random() * 60, 0.18)
+      ctx.beginPath()
+      ctx.ellipse(random() * size, random() * size, 30 + random() * 60, 20 + random() * 40, random() * 3, 0, 7)
+      ctx.fill()
+    }
+    cracks(ctx, size, 5, 90)
+  }),
+  foliage: texture(1, (ctx, size) => {
+    ctx.fillStyle = grey(120)
+    ctx.fillRect(0, 0, size, size)
+    for (let i = 0; i < 2600; i++) {
+      ctx.fillStyle = grey(110 + random() * 150, 0.9)
+      ctx.beginPath()
+      ctx.ellipse(random() * size, random() * size, 5 + random() * 7, 3 + random() * 4, random() * Math.PI, 0, 7)
+      ctx.fill()
+    }
+    grain(ctx, size, 60, 40, 500, 6, 0.35)
+  }),
+  paving: texture(1.2, (ctx, size) => {
+    ctx.fillStyle = grey(150)
+    ctx.fillRect(0, 0, size, size)
+    const tile = size / 4
+    for (let x = 0; x < size; x += tile) for (let y = 0; y < size; y += tile) {
+      const shade = 195 + (random() - 0.5) * 30
+      ctx.fillStyle = grey(shade)
+      ctx.fillRect(x + 3, y + 3, tile - 6, tile - 6)
+      ctx.fillStyle = grey(shade + 30, 0.7)
+      ctx.fillRect(x + 3, y + 3, tile - 6, 3)
+      ctx.fillRect(x + 3, y + 3, 3, tile - 6)
+      ctx.fillStyle = grey(shade - 35, 0.7)
+      ctx.fillRect(x + 3, y + tile - 6, tile - 6, 3)
+      ctx.fillRect(x + tile - 6, y + 3, 3, tile - 6)
+      if (random() < 0.12) { ctx.save(); ctx.beginPath(); ctx.rect(x + 3, y + 3, tile - 6, tile - 6); ctx.clip(); cracks(ctx, size, 1, 110); ctx.restore() }
+    }
+    grain(ctx, size, 190, 60, 6000, 2, 0.35)
   }),
   brick: texture(2.4, (ctx, size) => {
-    ctx.fillStyle = grey(215)
+    ctx.fillStyle = grey(205)
     ctx.fillRect(0, 0, size, size)
+    grain(ctx, size, 200, 50, 4000, 3, 0.5)
     const w = size / 10, h = size / 32
     for (let row = 0; row < 32; row++) for (let column = -1; column < 10; column++) {
-      ctx.fillStyle = grey(160 + random() * 50)
-      ctx.fillRect(column * w + (row % 2) * w / 2 + 1, row * h + 1, w - 2, h - 2)
+      const x = column * w + (row % 2) * w / 2 + 1.5, y = row * h + 1.5, shade = random() < 0.08 ? 110 + random() * 30 : 150 + random() * 60
+      const face = ctx.createLinearGradient(0, y, 0, y + h)
+      face.addColorStop(0, grey(shade + 25))
+      face.addColorStop(1, grey(shade - 15))
+      ctx.fillStyle = face
+      ctx.fillRect(x, y, w - 3, h - 3)
+      ctx.fillStyle = grey(shade - 40, 0.5)
+      ctx.fillRect(x, y + h - 4, w - 3, 1)
     }
+    grain(ctx, size, 170, 80, 5000, 2, 0.25)
   }),
   window: texture(1, (ctx, size) => {
     const glass = ctx.createLinearGradient(0, 0, size / 2, size)
@@ -226,14 +310,29 @@ const TEXTURES = {
     for (let k = 0; k < 2; k++) ctx.fillRect(size / 2 + 24, 24 + k * size * 0.42, size / 2 - 48, size * 0.3)
     ctx.fillStyle = '#d9c26a'
     ctx.fillRect(size / 2 + 28, size * 0.5, 14, 14)
-  }),
+  }, 256),
   tiles: texture(2, (ctx, size) => {
-    ctx.fillStyle = grey(150)
+    ctx.fillStyle = grey(120)
     ctx.fillRect(0, 0, size, size)
-    for (let row = 0; row < 8; row++) for (let column = -1; column < 8; column++) {
-      ctx.fillStyle = grey(185 + random() * 35)
-      ctx.fillRect(column * 32 + (row % 2) * 16 + 1, row * 32, 30, 27)
+    const columns = 6, rows = 10, w = size / columns, h = size / rows
+    for (let row = 0; row < rows; row++) for (let column = -1; column <= columns; column++) {
+      const x = column * w + (row % 2) * w / 2, y = row * h, shade = 175 + random() * 45
+      const face = ctx.createLinearGradient(0, y, 0, y + h)
+      face.addColorStop(0, grey(shade + 20))
+      face.addColorStop(0.8, grey(shade - 10))
+      face.addColorStop(1, grey(shade - 50))
+      ctx.fillStyle = face
+      ctx.beginPath()
+      ctx.moveTo(x + 1, y)
+      ctx.lineTo(x + w - 1, y)
+      ctx.lineTo(x + w - 1, y + h - 8)
+      ctx.quadraticCurveTo(x + w / 2, y + h + 6, x + 1, y + h - 8)
+      ctx.closePath()
+      ctx.fill()
+      ctx.fillStyle = grey(90, 0.35)
+      ctx.fillRect(x + 1, y, 2, h - 8)
     }
+    grain(ctx, size, 180, 60, 4000, 2, 0.3)
   })
 }
 
@@ -1037,18 +1136,44 @@ function instances(geometry, color, placements, map, variation = 0, tiled = true
   return mesh
 }
 
+function blobs(list) {
+  return mergeGeometries(list.map(([x, y, z, radius, sx = 1, sy = 1, sz = 1]) => new THREE.IcosahedronGeometry(radius, 1).scale(sx, sy, sz).translate(x, y, z)))
+}
+
+function branch(x, y, z, length, tiltX, tiltZ) {
+  return new THREE.CylinderGeometry(0.05, 0.11, length, 5).translate(0, length / 2, 0).rotateX(tiltX).rotateZ(tiltZ).translate(x, y, z)
+}
+
+function treeFits(x, z) {
+  if (blocked(x, z)) return false
+  const { segment, distance } = nearestSegment(x, z)
+  return !segment || distance > segment.road.w / 2 + 1.5
+}
+
 function buildTrees() {
-  const placements = world.trees.map(([x, z]) => [x, terrainHeight(x, z) - 0.1, z, 0.8 + ((x * 7 + z * 13) % 10) / 20, 0])
+  const placements = world.trees.filter(([x, z]) => treeFits(x, z)).map(([x, z]) => [x, terrainHeight(x, z) - 0.1, z, 0.8 + ((x * 7 + z * 13) % 10) / 20, (x * 3.1 + z * 1.7) % 6.28])
   const dead = placements.filter(([x, , z]) => wasteAt(x, z))
   const alive = placements.filter(p => !dead.includes(p))
   const conifers = alive.filter(([x, , z]) => (Math.abs(x * 3 + z * 5) | 0) % 4 === 0)
-  const leafy = alive.filter(p => !conifers.includes(p))
+  const broad = alive.filter(p => !conifers.includes(p))
+  const tall = broad.filter(([x, , z]) => (Math.abs(x * 5 + z * 3) | 0) % 3 === 0)
+  const round = broad.filter(p => !tall.includes(p))
   instances(new THREE.CylinderGeometry(0.12, 0.3, 3.2, 5).translate(0, 1.6, 0), 0x4a4038, dead)
   instances(new THREE.CylinderGeometry(0.05, 0.1, 1.6, 4).rotateZ(0.7).translate(0.4, 3.1, 0), 0x4a4038, dead)
-  instances(new THREE.CylinderGeometry(0.25, 0.35, 2, 6).translate(0, 1, 0), 0x7a5230, leafy)
-  instances(new THREE.IcosahedronGeometry(1.8, 1).translate(0, 3.4, 0), 0xffffff, leafy, TEXTURES.foliage, 0.1)
-  instances(new THREE.CylinderGeometry(0.2, 0.3, 1.5, 6).translate(0, 0.75, 0), 0x5a3d25, conifers)
-  instances(new THREE.ConeGeometry(1.6, 5, 7).translate(0, 4, 0), 0xffffff, conifers, TEXTURES.foliage, 0.06)
+  const trunk = mergeGeometries([
+    new THREE.CylinderGeometry(0.2, 0.36, 2.6, 7).translate(0, 1.3, 0),
+    branch(0.1, 2.3, 0, 1.5, 0.2, -0.7), branch(-0.1, 2.5, 0.1, 1.3, -0.5, 0.6), branch(0, 2.7, -0.1, 1.2, 0.8, 0.1)
+  ])
+  instances(trunk, 0x6b4a2c, round)
+  instances(blobs([[0, 3.7, 0, 1.7], [1.0, 3.3, 0.3, 1.1], [-0.9, 3.4, -0.4, 1.2], [0.2, 4.6, -0.5, 1.0], [-0.3, 3.1, 1.0, 0.9], [0.6, 4.2, 0.9, 0.8]]), 0xffffff, round, TEXTURES.foliage, 0.14)
+  instances(trunk, 0x5c4a3a, tall)
+  instances(blobs([[0, 4.2, 0, 1.3, 1, 1.6, 1], [0.7, 3.6, 0.4, 0.9, 1, 1.3, 1], [-0.7, 3.9, -0.3, 0.9, 1, 1.4, 1], [0.1, 5.6, 0.2, 0.8]]), 0xffffff, tall, TEXTURES.foliage, 0.12)
+  instances(new THREE.CylinderGeometry(0.18, 0.3, 1.8, 6).translate(0, 0.9, 0), 0x5a3d25, conifers)
+  instances(mergeGeometries([
+    new THREE.ConeGeometry(1.8, 2.6, 8).translate(0, 2.6, 0),
+    new THREE.ConeGeometry(1.35, 2.4, 8).translate(0, 4.0, 0),
+    new THREE.ConeGeometry(0.85, 2.2, 8).translate(0, 5.3, 0)
+  ]), 0xffffff, conifers, TEXTURES.foliage, 0.08)
 }
 
 let skyDome, clouds
