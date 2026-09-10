@@ -3,7 +3,7 @@ import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 
 
-const WORLD = new URLSearchParams(location.search).get('world') || 'sittard-geleen'
+const WORLD = new URLSearchParams(location.search).get('world') || 'rooseveltstraat'
 
 // LOADING SCREEN:
 
@@ -43,9 +43,9 @@ function nextSlide() {
   document.getElementById('player-name').value = localStorage.getItem('playerName') || `Panda-${Math.floor(Math.random() * 900 + 100)}`
 const slideTimer = setInterval(nextSlide, 4000)
 let progress = 0
-const PHASES = { fetch: 3, terrain: 12, stamp: 2, prepare: 3, index: 1, roads: 8, buildings: 30, merge: 10, ground: 20, trees: 3, server: 2 }
+const PHASES = { fetch: 3, terrain: 12, stamp: 2, prepare: 3, index: 1, roads: 8, buildings: 30, merge: 10, ground: 20, trees: 3, nature: 3, server: 2 }
 const total = Object.values(PHASES).reduce((a, b) => a + b, 0)
-const LABELS = { fetch: 'Kaart ophalen', terrain: 'Terrein boetseren', stamp: 'Wegen aanleggen', prepare: 'Bruggen bouwen', index: 'Straatnamen leren', roads: 'Asfalt gieten', buildings: 'Huizen metselen', merge: 'Wijken samenvoegen', ground: 'Gras zaaien', trees: 'Bomen planten', server: 'Verbinden met server' }
+const LABELS = { fetch: 'Kaart ophalen', terrain: 'Terrein boetseren', stamp: 'Wegen aanleggen', prepare: 'Bruggen bouwen', index: 'Straatnamen leren', roads: 'Asfalt gieten', buildings: 'Huizen metselen', merge: 'Wijken samenvoegen', ground: 'Gras zaaien', trees: 'Bomen planten', nature: 'Bloemen zaaien', server: 'Verbinden met server' }
 
 async function phase(name, fn) {
   loadingPhase.textContent = LABELS[name] + '…'
@@ -67,6 +67,7 @@ const COLORS = {
   door:       new THREE.Color(0x4a3222),
   chimney:    new THREE.Color(0x6b4a3a),
   road:       new THREE.Color(0x585b62),
+  wear:       new THREE.Color(0x4d5057),
   sidewalk:   new THREE.Color(0xa9a59c),
   curb:       new THREE.Color(0xc4c1b8),
   dash:       new THREE.Color(0xe8e8e0),
@@ -256,6 +257,11 @@ const TEXTURES = {
     }
     grain(ctx, size, 60, 40, 500, 6, 0.35)
   }),
+  gravel: texture(1.5, (ctx, size) => {
+    speckle(ctx, size, 190, 30, 300, 40)
+    grain(ctx, size, 185, 130, 9000, 5, 0.8)
+    grain(ctx, size, 200, 100, 20000, 2, 0.6)
+  }),
   paving: texture(1.2, (ctx, size) => {
     ctx.fillStyle = grey(150)
     ctx.fillRect(0, 0, size, size)
@@ -337,11 +343,11 @@ const TEXTURES = {
 }
 
 const textured = map => infectable(new THREE.MeshToonMaterial({ map, vertexColors: true, gradientMap: gradient, side: THREE.DoubleSide }))
-const MATERIALS = { plain: toon, asphalt: textured(TEXTURES.asphalt), paving: textured(TEXTURES.paving), brick: textured(TEXTURES.brick), tiles: textured(TEXTURES.tiles), ground: textured(TEXTURES.grass), window: textured(TEXTURES.window) }
+const MATERIALS = { plain: toon, asphalt: textured(TEXTURES.asphalt), paving: textured(TEXTURES.paving), gravel: textured(TEXTURES.gravel), brick: textured(TEXTURES.brick), tiles: textured(TEXTURES.tiles), ground: textured(TEXTURES.grass), window: textured(TEXTURES.window) }
 MATERIALS.window.map.wrapS = MATERIALS.window.map.wrapT = THREE.ClampToEdgeWrapping
 MATERIALS.window.map.repeat.set(1, 1)
 MATERIALS.window.userData.outlineParameters = { visible: false }
-;['plain', 'asphalt', 'paving', 'ground'].forEach(name => { MATERIALS[name].userData.outlineParameters = { visible: false } })
+;['plain', 'asphalt', 'paving', 'gravel', 'ground'].forEach(name => { MATERIALS[name].userData.outlineParameters = { visible: false } })
 
 const UPPER = ['hornbach', 'jumbo', 'aldi', 'lidl', 'hema', 'gamma', 'praxis', 'karwei', 'action', 'ikea', 'kfc', 'bp', 'plus', 'spar', 'coop', 'expert', 'wibra', 'intertoys', 'decathlon', 'primark', 'kwantum', 'shell', 'ing']
 const BRANDS = [['hornbach', '#f58220'], ['jumbo', '#f9c400', '#000'], ['albert heijn', '#00a0e2'], ['action', '#0c4da2'], ['kruidvat', '#e30613'],
@@ -760,9 +766,10 @@ function buildRoads(groups) {
     } else if (road.kind === 'water') {
       strip(road, road.w, road.level === undefined ? 0.12 : 0, COLORS.water, groups.plain)
     } else if (road.kind === 'path') {
-      strip(road, Math.min(road.w, 1.5), 0.12, COLORS.path, groups.paving)
+      strip(road, Math.min(road.w, 1.5), 0.12, COLORS.path, groups.gravel)
     } else {
       if (road.elevated || road.bridge) strip(road, road.w, 0.22, COLORS.road, groups.asphalt)
+      if (road.w >= 4) for (const lane of [-1, 1]) for (const wheel of [-1, 1]) band(points, lane * road.w / 4 + wheel * 0.62, 0.115, 0.45, COLORS.wear, groups.plain)
       if (road.w >= 7 || road.dual) {
             splitWhere(points, ([x, z]) => onOtherAsphalt(x, z, road, 2.5)).forEach(marks => {
                 if (!road.dual || road.w >= 9) dashes(marks, groups.plain)
@@ -897,7 +904,16 @@ function bridge(points, width, parts) {
   for (const side of [0, 1]) {
     const top = sides.map(pair => pair[side])
     parts.push(paint(skirt(top, top.map(([x, y, z]) => [x, y - 1.2, z])), COLORS.concrete))
-    parts.push(paint(skirt(top.map(([x, y, z]) => [x, y + 1.1, z]), top), COLORS.rail))
+    parts.push(paint(skirt(top.map(([x, y, z]) => [x, y + 0.35, z]), top), COLORS.concrete))
+    parts.push(paint(skirt(top.map(([x, y, z]) => [x, y + 1.1, z]), top.map(([x, y, z]) => [x, y + 1.02, z])), COLORS.rail))
+    parts.push(paint(skirt(top.map(([x, y, z]) => [x, y + 0.72, z]), top.map(([x, y, z]) => [x, y + 0.68, z])), COLORS.rail))
+    let along = 0
+    top.forEach(([x, y, z], i) => {
+      if (i) along += Math.hypot(x - top[i - 1][0], z - top[i - 1][2])
+      if (i && along < 2) return
+      along = 0
+      parts.push(paint(new THREE.CylinderGeometry(0.04, 0.04, 0.75, 5).translate(x, y + 0.72, z), COLORS.rail))
+    })
   }
   parts.push(paint(skirt(sides.map(pair => [pair[0][0], pair[0][1] - 1.2, pair[0][2]]), sides.map(pair => [pair[1][0], pair[1][1] - 1.2, pair[1][2]])), COLORS.concrete))
   let travelled = 0
@@ -1049,6 +1065,8 @@ function buildBuildings(groups) {
   })
 }
 
+let kindAt = () => 'ground'
+
 function buildGround() {
   const [minX, minZ, maxX, maxZ] = world.bounds
   const kinds = new Uint8Array(T.cols * T.rows)
@@ -1057,7 +1075,7 @@ function buildGround() {
     const kind = KINDS_BY_INDEX.indexOf(area.kind)
     if (kind > 0) rasterize(area.p, kinds, kind)
   })
-  const kindAt = (x, z) => KINDS_BY_INDEX[kinds[clamp(Math.round((z - T.z0) / T.sz), 0, T.rows - 1) * T.cols + clamp(Math.round((x - T.x0) / T.sx), 0, T.cols - 1)]]
+  kindAt = (x, z) => KINDS_BY_INDEX[kinds[clamp(Math.round((z - T.z0) / T.sz), 0, T.rows - 1) * T.cols + clamp(Math.round((x - T.x0) / T.sx), 0, T.cols - 1)]]
   const segments = Math.round(TILE / Math.min(T.sx, T.sz, 10))
   for (let tx = minX; tx < maxX; tx += TILE) for (let tz = minZ; tz < maxZ; tz += TILE) {
     const width = Math.min(TILE, maxX - tx), depth = Math.min(TILE, maxZ - tz)
@@ -1081,7 +1099,7 @@ function buildGround() {
 }
 
 async function buildWorld() {
-  const groups = { plain: [], asphalt: [], paving: [], brick: [], tiles: [], ground: [], sign: [], window: [] }
+  const groups = { plain: [], asphalt: [], paving: [], gravel: [], brick: [], tiles: [], ground: [], sign: [], window: [] }
   await phase('roads', () => buildRoads(groups))
   await phase('buildings', () => buildBuildings(groups))
   await phase('merge', () => { for (const [name, parts] of Object.entries(groups)) {
@@ -1104,6 +1122,7 @@ async function buildWorld() {
         } })
         await phase('ground', buildGround)
         await phase('trees', buildTrees)
+  await phase('nature', buildNature)
           buildTrains()
           buildSky()
       }
@@ -1111,7 +1130,7 @@ async function buildWorld() {
 const TILE = 400
 const tileKey = (x, z) => `${Math.floor(x / TILE)},${Math.floor(z / TILE)}`
 
-function instances(geometry, color, placements, map, variation = 0, tiled = true) {
+function instances(geometry, color, placements, map, variation = 0, tiled = true, shadows = true) {
   const material = solid(color, map)
   const tiles = new Map()
   placements.forEach(placement => {
@@ -1130,7 +1149,7 @@ function instances(geometry, color, placements, map, variation = 0, tiled = true
       if (variation) mesh.setColorAt(i, tint.setHSL(0.28 + (random() - 0.5) * variation, 0.5 + random() * 0.2, 0.35 + random() * 0.15))
     })
     mesh.computeBoundingSphere()
-    mesh.castShadow = true
+    mesh.castShadow = shadows
     scene.add(mesh)
   })
   return mesh
@@ -1174,6 +1193,29 @@ function buildTrees() {
     new THREE.ConeGeometry(1.35, 2.4, 8).translate(0, 4.0, 0),
     new THREE.ConeGeometry(0.85, 2.2, 8).translate(0, 5.3, 0)
   ]), 0xffffff, conifers, TEXTURES.foliage, 0.08)
+}
+
+function buildNature() {
+  const [minX, minZ, maxX, maxZ] = world.bounds
+  const tufts = [], bushes = [], flowers = [[], [], []]
+  const count = Math.min(60000, (maxX - minX) * (maxZ - minZ) / 40)
+  for (let i = 0; i < count; i++) {
+    const x = minX + random() * (maxX - minX), z = minZ + random() * (maxZ - minZ)
+    const kind = kindAt(x, z)
+    if (!['grass', 'forest', 'ground'].includes(kind) || wasteAt(x, z) || !treeFits(x, z)) continue
+    const place = [x, terrainHeight(x, z) - 0.03, z, 0.7 + random() * 0.8, random() * 6.28], roll = random()
+    if (kind === 'forest' ? roll < 0.2 : roll < 0.04) bushes.push(place)
+    else if (roll < 0.1) flowers[Math.floor(random() * 3)].push(place)
+    else tufts.push(place)
+  }
+  const tuft = mergeGeometries([[0, 0], [0.12, 0.05], [-0.1, 0.08], [0.04, -0.12], [-0.06, -0.06]].map(([dx, dz], i) => new THREE.ConeGeometry(0.07, 0.3 + (i % 2) * 0.15, 3).translate(dx, 0.15, dz)))
+  instances(tuft, 0xffffff, tufts, TEXTURES.foliage, 0.16, true, false)
+  instances(blobs([[0, 0.5, 0, 0.6], [0.4, 0.42, 0.2, 0.45], [-0.35, 0.45, -0.25, 0.48], [0.1, 0.8, -0.1, 0.4]]), 0xffffff, bushes, TEXTURES.foliage, 0.1)
+  const flower = mergeGeometries([[0, 0], [0.12, 0.08], [-0.1, 0.1]].flatMap(([dx, dz]) => [
+    new THREE.CylinderGeometry(0.012, 0.012, 0.3, 3).translate(dx, 0.15, dz).toNonIndexed(),
+    new THREE.IcosahedronGeometry(0.06, 0).translate(dx, 0.32, dz)
+  ]))
+  ;[0xf2d24b, 0xe86aa5, 0xf6f6f2].forEach((color, i) => instances(flower, color, flowers[i], null, 0, true, false))
 }
 
 let skyDome, clouds
@@ -1241,6 +1283,34 @@ function buildTrains() {
   })
 }
 
+function pandaParts(part, body, glass = 0x2b3a4a, plastic = 0x3a3a3a) {
+  const shell = [part(1.46, 0.44, 3.3, body, 0, 0.62, 0), part(1.4, 0.56, 2.3, body, 0, 1.13, -0.4)]
+  part(1.44, 0.2, 0.95, body, 0, 0.8, 1.15)
+  part(1.48, 0.16, 3.42, plastic, 0, 0.42, 0)
+  part(1.5, 0.14, 0.14, plastic, 0, 0.5, 1.72)
+  part(1.5, 0.14, 0.14, plastic, 0, 0.5, -1.72)
+  part(0.7, 0.16, 0.03, 0x111111, 0, 0.78, 1.66)
+  part(0.7, 0.02, 0.03, 0x777777, 0, 0.78, 1.67)
+  part(0.3, 0.1, 0.02, 0xf4f4f4, 0, 0.6, 1.8)
+  part(1.36, 0.03, 1.6, body, 0, 1.42, -0.4)
+  for (const side of [-1, 1]) {
+    part(0.3, 0.14, 0.03, 0xf7f0c8, side * 0.5, 0.78, 1.66)
+    part(0.28, 0.12, 0.03, 0xc8281e, side * 0.52, 0.74, -1.66)
+    part(0.02, 0.4, 0.9, glass, side * 0.72, 1.2, 0.2)
+    part(0.02, 0.4, 0.95, glass, side * 0.72, 1.2, -0.9)
+    part(0.08, 0.1, 0.16, plastic, side * 0.77, 1.05, 0.6)
+    part(0.02, 0.05, 0.16, plastic, side * 0.74, 0.92, 0.05)
+    part(0.02, 0.05, 0.16, plastic, side * 0.74, 0.92, -1.0)
+    part(0.06, 0.3, 0.72, plastic, side * 0.72, 0.36, 1.08)
+    part(0.06, 0.3, 0.72, plastic, side * 0.72, 0.36, -1.08)
+    part(0.04, 0.03, 0.03, 0xffb000, side * 0.72, 0.62, 1.7)
+  }
+  part(1.3, 0.42, 0.02, glass, 0, 1.2, -1.56)
+  part(0.3, 0.02, 0.04, plastic, 0.35, 0.92, 1.0)
+  part(1.3, 0.5, 0.02, glass, 0, 1.17, 0.74).rotation.x = -0.4
+  return shell
+}
+
 function pandaModel(bodyColor) {
   const group = new THREE.Group()
   group.rotation.order = 'YXZ'
@@ -1251,15 +1321,7 @@ function pandaModel(bodyColor) {
     group.add(mesh)
     return mesh
   }
-  part(1.46, 0.5, 3.38, bodyColor, 0, 0.6, 0)
-  part(1.42, 0.6, 2.4, bodyColor, 0, 1.15, -0.45)
-  part(1.48, 0.14, 3.42, 0x3a3a3a, 0, 0.42, 0)
-  for (const side of [-1, 1]) {
-    part(0.02, 0.4, 0.9, 0x2b3a4a, side * 0.72, 1.2, 0.2)
-    part(0.02, 0.4, 0.95, 0x2b3a4a, side * 0.72, 1.2, -0.9)
-  }
-  part(1.3, 0.42, 0.02, 0x2b3a4a, 0, 1.2, -1.66)
-  part(1.3, 0.5, 0.02, 0x2b3a4a, 0, 1.17, 0.7).rotation.x = -0.4
+  pandaParts(part, bodyColor)
   const tyre = new THREE.CylinderGeometry(0.28, 0.28, 0.16, 12).rotateZ(Math.PI / 2)
   for (const [x, z] of [[-0.66, 1.08], [0.66, 1.08], [-0.66, -1.08], [0.66, -1.08]]) {
     const wheel = new THREE.Mesh(tyre, solid(0x111111))
@@ -1281,19 +1343,7 @@ function buildCar() {
         mesh.userData.rotation = mesh.rotation.clone()
         return mesh
       }
-  const body = 0xefe6cf, glass = 0x2b3a4a, plastic = 0x3a3a3a
-
-  bodyParts.push(part(1.46, 0.5, 3.38, body, 0, 0.6, 0), part(1.42, 0.6, 2.4, body, 0, 1.15, -0.45))
-  part(1.48, 0.14, 3.42, plastic, 0, 0.42, 0)
-  part(1.5, 0.12, 0.12, plastic, 0, 0.45, 1.72)
-  part(1.5, 0.12, 0.12, plastic, 0, 0.45, -1.72)
-
-  for (const side of [-1, 1]) {
-    part(0.02, 0.4, 0.9, glass, side * 0.72, 1.2, 0.2)
-    part(0.02, 0.4, 0.95, glass, side * 0.72, 1.2, -0.9)
-  }
-  part(1.3, 0.42, 0.02, glass, 0, 1.2, -1.66)
-  part(1.3, 0.5, 0.02, glass, 0, 1.17, 0.7).rotation.x = -0.4
+  bodyParts.push(...pandaParts(part, 0xefe6cf))
   car.children.forEach(mesh => { mesh.userData.rotation = mesh.rotation.clone() })
 
   for (const x of [-0.5, 0.5]) {

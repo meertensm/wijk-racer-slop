@@ -8,7 +8,7 @@ Dir.chdir(root)
   population player scores game http_request static web_socket client server
 ].each { |file| require "#{root}/server/#{file}" }
 
-world = World.load(ARGV[1] || 'sittard-geleen')
+world = World.load(ARGV[1] || 'rooseveltstraat')
 npcs  = Population.new(world).build
 puts "#{world.name}: #{npcs.length} npcs"
 Server.new(Integer(ARGV[0] || 8765), Game.new(world, npcs, Scores.new('data/scores.json')), root).run
