@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 
-const WORLD = new URLSearchParams(location.search).get('world') || 'urmond'
+const WORLD = new URLSearchParams(location.search).get('world') || 'geleen'
 const world = await fetch(`worlds/${WORLD}.json`, { cache: 'no-store' }).then(response => response.json())
 
 const COLORS = {
@@ -11,8 +11,9 @@ const COLORS = {
   glass:      new THREE.Color(0x26323f),
   door:       new THREE.Color(0x4a3222),
   chimney:    new THREE.Color(0x6b4a3a),
-  road:       new THREE.Color(0x4c4f57),
+  road:       new THREE.Color(0x585b62),
   sidewalk:   new THREE.Color(0xa9a59c),
+  curb:       new THREE.Color(0xc4c1b8),
   dash:       new THREE.Color(0xe8e8e0),
   path:       new THREE.Color(0xc9c1b2),
   water:      new THREE.Color(0x4f9fd6),
@@ -93,9 +94,9 @@ function speckle(ctx, size, base, spread, count, blob) {
 
 const TEXTURES = {
   grass:   texture(6, (ctx, size) => { speckle(ctx, size, 205, 70, 1500, 14); speckle(ctx, size, 205, 90, 3000, 2) }),
-  asphalt: texture(3, (ctx, size) => speckle(ctx, size, 215, 70, 5000, 2.5)),
+  asphalt: texture(3, (ctx, size) => { speckle(ctx, size, 210, 40, 400, 30); speckle(ctx, size, 210, 90, 6000, 2) }),
   foliage: texture(1, (ctx, size) => speckle(ctx, size, 200, 110, 1500, 12)),
-  paving: texture(1.4, (ctx, size) => {
+  paving: texture(1.2, (ctx, size) => {
     ctx.fillStyle = grey(170)
     ctx.fillRect(0, 0, size, size)
     for (let x = 0; x < size; x += 64) for (let y = 0; y < size; y += 64) {
@@ -225,15 +226,40 @@ function paint(geometry, color) {
   return geometry
 }
 
-function edges(points, width) {
-  const half = width / 2
+function offsetLine(points, offset, lift = 0) {
   return points.map(([x, z, y, elevated], i) => {
     const [px, pz] = points[Math.max(i - 1, 0)], [nx, nz] = points[Math.min(i + 1, points.length - 1)]
     const length = Math.hypot(nx - px, nz - pz) || 1
-    const dx = (nx - px) / length, dz = (nz - pz) / length
-    const left = [x - dz * half, z + dx * half], right = [x + dz * half, z - dx * half]
-    return [[left[0], elevated ? y : terrainHeight(...left), left[1]], [right[0], elevated ? y : terrainHeight(...right), right[1]]]
+    const ox = x - (nz - pz) / length * offset, oz = z + (nx - px) / length * offset
+    return [ox, (elevated ? y : terrainHeight(ox, oz)) + lift, oz]
   })
+}
+
+function edges(points, width) {
+  const left = offsetLine(points, width / 2), right = offsetLine(points, -width / 2)
+  return left.map((point, i) => [point, right[i]])
+}
+
+function trim(points, cutStart, cutEnd) {
+  const cut = (list, amount) => {
+    let remaining = amount
+    while (list.length > 2 && remaining > 0) {
+      const [ax, az, ay, ae] = list[0], [bx, bz, by] = list[1]
+      const length = Math.hypot(bx - ax, bz - az)
+      if (length <= remaining) { remaining -= length; list.shift(); continue }
+      const t = remaining / length
+      list[0] = [ax + (bx - ax) * t, az + (bz - az) * t, ay + (by - ay) * t, ae]
+      remaining = 0
+    }
+    return list
+  }
+  return cut(cut([...points], cutStart).reverse(), cutEnd).reverse()
+}
+
+function band(points, offset, width, lift, color, parts) {
+  const inner = offsetLine(points, offset, lift), outer = offsetLine(points, offset + Math.sign(offset) * width, lift)
+  parts.push(paint(skirt(inner, outer), color))
+  return inner
 }
 
 function skirt(top, bottom) {
@@ -290,16 +316,33 @@ function quad(cx, cz, ux, uz, nx, nz, width, bottom, height, color) {
 // WORLD:
 
 function buildRoads(groups) {
+  const nodes = new Map()
+  world.roads.filter(road => road.kind === 'road').forEach(road => road.p.forEach(point => {
+    const key = point.join(',')
+    if (!nodes.has(key)) nodes.set(key, [])
+    nodes.get(key).push(road)
+  }))
+  const clearance = (road, point) => Math.max(0, ...nodes.get(point.join(',')).filter(other => other !== road).map(other => other.w / 2 + 1.5))
+
   world.roads.forEach(road => {
     const points = sample(road)
     if (road.kind === 'water') {
       strip(points, road.w, road.level === undefined ? 0.12 : 0, COLORS.water, groups.plain)
     } else if (road.kind === 'path') {
-      strip(points, road.w, 0.12, COLORS.path, groups.paving)
+      strip(points, Math.min(road.w, 1.5), 0.12, COLORS.path, groups.paving)
     } else {
-      if (road.w <= 8 && !road.elevated) strip(points, road.w + 3, 0.12, COLORS.sidewalk, groups.paving, false)
       strip(points, road.w, 0.18, COLORS.road, groups.asphalt)
-      if (road.w >= 7) dashes(points, groups.plain)
+      if (road.w >= 4 && road.w <= 8 && !road.elevated) {
+        const walk = trim(points, clearance(road, road.p[0]), clearance(road, road.p[road.p.length - 1]))
+        for (const side of [-1, 1]) {
+          const inner = band(walk, side * (road.w / 2 + 0.05), 1.5, 0.3, COLORS.sidewalk, groups.paving)
+          groups.plain.push(paint(skirt(inner, inner.map(([x, y, z]) => [x, y - 0.14, z])), COLORS.curb))
+        }
+      }
+      if (road.w >= 7) {
+        dashes(points, groups.plain)
+        for (const side of [-1, 1]) band(points, side * (road.w / 2 - 0.35), 0.12, 0.2, COLORS.dash, groups.plain)
+      }
       if (road.bridge) bridge(points, road.w, groups.plain)
       else if (road.elevated) embankment(points, road.w, groups.ground)
     }
@@ -566,6 +609,105 @@ function buildCar() {
   return car
 }
 
+// BEAGLES:
+
+const beagles = []
+let explosion = null
+
+function beagleGeometry() {
+  const parts = []
+  const box = (w, h, d, color, x, y, z, tilt = 0) => parts.push(paint(new THREE.BoxGeometry(w, h, d).rotateX(tilt).translate(x, y, z), new THREE.Color(color)))
+  box(0.28, 0.26, 0.7, 0xf2ede4, 0, 0.38, 0)
+  box(0.29, 0.12, 0.42, 0x3b2a1e, 0, 0.5, -0.08)
+  box(0.22, 0.22, 0.28, 0xa5683a, 0, 0.5, 0.42)
+  box(0.14, 0.12, 0.14, 0xf2ede4, 0, 0.44, 0.6)
+  box(0.04, 0.04, 0.04, 0x111111, 0, 0.47, 0.68)
+  for (const side of [-1, 1]) box(0.06, 0.2, 0.14, 0x6b3f22, side * 0.14, 0.42, 0.42)
+  for (const [x, z] of [[-0.1, 0.25], [0.1, 0.25], [-0.1, -0.25], [0.1, -0.25]]) box(0.08, 0.26, 0.08, 0xf2ede4, x, 0.13, z)
+  box(0.06, 0.06, 0.32, 0xf2ede4, 0, 0.55, -0.42, -0.9)
+  return mergeGeometries(parts.map(part => { part.deleteAttribute('uv'); return part }))
+}
+
+function buildBeagles() {
+  const geometry = beagleGeometry()
+  const spots = []
+  world.roads.filter(road => road.kind === 'road' && road.w >= 5 && road.w <= 8).forEach(road => {
+    const points = sample(road)
+    for (let i = 5; i < points.length; i += 12) {
+      const [x, z] = points[i], [px, pz] = points[i - 1]
+      const length = Math.hypot(x - px, z - pz) || 1
+      const side = random() < 0.5 ? -1 : 1, offset = road.w / 2 + 2.5
+      spots.push([x - (z - pz) / length * offset * side, z + (x - px) / length * offset * side])
+    }
+  })
+  const candidates = spots.sort(() => random() - 0.5).filter(([x, z]) => Math.hypot(x - world.start.x, z - world.start.z) > 40 && !blocked(x, z))
+  const nearby = ([x, z]) => Math.hypot(x - world.start.x, z - world.start.z) < 350
+  ;[...candidates.filter(nearby).slice(0, 60), ...candidates.filter(spot => !nearby(spot)).slice(0, 60)]
+    .forEach(([x, z]) => {
+      const mesh = new THREE.Mesh(geometry, toon)
+      mesh.castShadow = true
+      scene.add(mesh)
+      beagles.push({ mesh, x, z, home: [x, z], heading: random() * Math.PI * 2, speed: 1, timer: 0 })
+    })
+}
+
+function updateBeagles(dt, now) {
+  beagles.forEach(beagle => {
+    beagle.timer -= dt
+    if (beagle.timer < 0) {
+      const far = Math.hypot(beagle.home[0] - beagle.x, beagle.home[1] - beagle.z) > 40
+      beagle.heading = far ? Math.atan2(beagle.home[0] - beagle.x, beagle.home[1] - beagle.z) : beagle.heading + (random() - 0.5) * 3
+      beagle.speed = random() < 0.25 ? 0 : 0.6 + random() * 1.2
+      beagle.timer = 2 + random() * 4
+    }
+    const x = beagle.x + Math.sin(beagle.heading) * beagle.speed * dt, z = beagle.z + Math.cos(beagle.heading) * beagle.speed * dt
+    if (blocked(x, z)) {
+      beagle.heading += Math.PI
+    } else {
+      beagle.x = clamp(x, minX, maxX)
+      beagle.z = clamp(z, minZ, maxZ)
+    }
+    beagle.mesh.position.set(beagle.x, groundHeight(beagle.x, beagle.z) + (beagle.speed ? Math.abs(Math.sin(now / 1000 * 12)) * 0.05 : 0), beagle.z)
+    beagle.mesh.rotation.y = beagle.heading
+    if (!explosion && Math.hypot(beagle.x - state.x, beagle.z - state.z) < 1.6) explode()
+  })
+}
+
+function explode() {
+  const fireball = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), new THREE.MeshBasicMaterial({ color: 0xff7a1a, transparent: true }))
+  fireball.material.userData.outlineParameters = { visible: false }
+  fireball.position.set(state.x, groundHeight(state.x, state.z) + 1, state.z)
+  scene.add(fireball)
+  explosion = { fireball, debris: [], at: performance.now() }
+  for (const mesh of [...car.children]) {
+    scene.attach(mesh)
+    explosion.debris.push({ mesh, velocity: new THREE.Vector3((random() - 0.5) * 12, 5 + random() * 9, (random() - 0.5) * 12), spin: (random() - 0.5) * 12 })
+  }
+  state.speed = 0
+  state.shake = 3
+  streetEl.textContent = 'BOEM! Beagle geraakt'
+  setTimeout(() => location.reload(), 2500)
+}
+
+function updateExplosion(dt) {
+  const age = (performance.now() - explosion.at) / 1000
+  explosion.debris.forEach(({ mesh, velocity, spin }) => {
+    velocity.y -= 9.8 * dt
+    mesh.position.addScaledVector(velocity, dt)
+    mesh.rotation.x += spin * dt
+    mesh.rotation.z += spin * dt
+    const ground = terrainHeight(mesh.position.x, mesh.position.z)
+    if (mesh.position.y < ground) {
+      mesh.position.y = ground
+      velocity.set(0, 0, 0)
+    }
+  })
+  explosion.fireball.scale.setScalar(1 + age * 8)
+  explosion.fireball.material.opacity = Math.max(0, 1 - age * 1.2)
+  camera.position.y += (Math.random() - 0.5) * state.shake
+  state.shake *= 0.92
+}
+
 // SPATIAL LOOKUPS:
 
 const grid = new Map()
@@ -667,6 +809,8 @@ function drawMinimap() {
       map.fill()
     }
   }
+  map.fillStyle = '#8b5a2b'
+  beagles.forEach(beagle => map.fillRect(beagle.x - 2.5, beagle.z - 2.5, 5, 5))
   map.restore()
 
   map.save()
@@ -696,9 +840,10 @@ digWater()
 prepareRoads()
 buildWorld()
 const car = buildCar()
+buildBeagles()
 
 const keys = new Set()
-window.debug = { keys, get state() { return state } }
+window.debug = { keys, beagles, get state() { return state } }
 addEventListener('keydown', event => { keys.add(event.code); if (event.code.startsWith('Arrow')) event.preventDefault() })
 addEventListener('keyup', event => keys.delete(event.code))
 addEventListener('resize', () => {
@@ -722,6 +867,11 @@ function corners(x, z, heading) {
 }
 
 function step(dt, now) {
+  if (explosion) {
+    updateExplosion(dt)
+    return
+  }
+
   const gas = keys.has('ArrowUp') || keys.has('KeyW')
   const brake = keys.has('ArrowDown') || keys.has('KeyS')
   const handbrake = keys.has('ShiftLeft') || keys.has('ShiftRight')
@@ -776,6 +926,7 @@ function step(dt, now) {
     streetTimer = 0.25
     streetEl.textContent = streetName(state.x, state.z)
   }
+  updateBeagles(dt, now)
   drawMinimap()
 }
 
