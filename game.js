@@ -17,7 +17,7 @@ const TIPS = [
   'Shift is de handrem. De Panda haalt 150 op de A2.',
   'Het terrein is echt: AHN-hoogtedata, het Julianakanaal ligt hoger dan Urmond.'
 ]
-let audio, hardstyle, nextBeat = 0, beat = 0, engine, engineGain, sfx, metal, metalTimer, metalBeat = 0, metalNext = 0
+let audio, hardstyle, nextBeat = 0, beat = 0, engine, engineGain, sfx, metal, metalTimer, metalBeat = 0, metalNext = 0, engineSample = null, hardstyleSampled = false
 const RIFF = [[82.41, 1], [82.41, 1], [82.41, 0], [98, 1], [82.41, 1], [82.41, 0], [110, 1], [110, 1], [82.41, 1], [82.41, 0], [82.41, 1], [73.42, 1], [82.41, 1], [82.41, 0], [98, 1], [110, 1]]
 const NOTES = [220, 261.6, 329.6, 392, 329.6, 261.6, 220, 196]
 const VOICES = await fetch('assets/voices.json').then(response => response.json())
@@ -2028,10 +2028,11 @@ function startAudio() {
   drive.curve = curve
   drive.connect(hardstyle)
   hardstyle.connect(audio.destination)
+  playSample('hardstyle', { loop: true, out: hardstyle }).then(track => { hardstyleSampled = !!track })
   nextBeat = audio.currentTime + 0.1
   startSfx()
   setInterval(() => {
-    while (nextBeat < audio.currentTime + 0.3) {
+    while (!hardstyleSampled && nextBeat < audio.currentTime + 0.3) {
       kick(nextBeat, drive)
       if (beat % 2 === 1) lead(nextBeat, NOTES[(beat >> 1) % NOTES.length], drive)
       nextBeat += 0.4
@@ -2079,6 +2080,7 @@ function startSfx() {
   engineGain.gain.value = 0
   engine.connect(filter).connect(engineGain).connect(sfx)
   engine.start()
+  playSample('engine', { loop: true, level: 0 }).then(track => { engineSample = track })
 }
 
 let wasGas = false, blipUntil = 0, screech = null
@@ -2092,8 +2094,14 @@ function updateEngine() {
   if (wasGas && !gas && speed > 6 && random() < 0.35) blipUntil = audio.currentTime + 0.35
   wasGas = gas
   const blip = audio.currentTime < blipUntil ? 60 : 0
-  engine.frequency.setTargetAtTime(45 + revs * 70 + gear * 8 + blip, audio.currentTime, 0.05)
-  engineGain.gain.setTargetAtTime(0.05 + revs * 0.07 + (gas || blip ? 0.04 : 0), audio.currentTime, 0.1)
+  if (engineSample) {
+    engineSample.source.playbackRate.setTargetAtTime(0.75 + revs * 1.1 + gear * 0.08 + (blip ? 0.45 : 0), audio.currentTime, 0.08)
+    engineSample.gain.gain.setTargetAtTime(0.3 + revs * 0.4 + (gas || blip ? 0.2 : 0), audio.currentTime, 0.1)
+    engineGain.gain.value = 0
+  } else {
+    engine.frequency.setTargetAtTime(45 + revs * 70 + gear * 8 + blip, audio.currentTime, 0.05)
+    engineGain.gain.setTargetAtTime(0.05 + revs * 0.07 + (gas || blip ? 0.04 : 0), audio.currentTime, 0.1)
+  }
   const braking = (keys.has('ShiftLeft') || keys.has('ShiftRight')) && speed > 3
   if (braking && !screech) {
     screech = { gain: audio.createGain(), voices: [], stop: () => {} }
@@ -2211,7 +2219,7 @@ function updateGroans(dt) {
 
 function thud(strength = 1) {
   if (!sfx) return
-  playSample('crash', { level: strength }).then(track => { if (!track) synthThud(strength) })
+  playSample('crash', { level: strength * 0.7 }).then(track => { if (!track) synthThud(strength) })
 }
 
 function synthThud(strength = 1) {

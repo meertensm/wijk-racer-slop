@@ -1,0 +1,86 @@
+{
+  "engine": {
+    "title": "car_idle_ext_loop.wav",
+    "author": "AndrewAlexander",
+    "license": "CC0",
+    "url": "https://freesound.org/s/369054/"
+  },
+  "brake": {
+    "title": "Chrysler LHS tire squeal 04",
+    "author": "audible-edge",
+    "license": "CC0",
+    "url": "https://freesound.org/s/71739/"
+  },
+  "crash": {
+    "title": "Car Crash",
+    "author": "squareal",
+    "license": "CC0",
+    "url": "https://freesound.org/s/237375/"
+  },
+  "scream1": {
+    "title": "Wounded man scream",
+    "author": "joseppujol",
+    "license": "CC0",
+    "url": "https://freesound.org/s/221544/"
+  },
+  "scream2": {
+    "title": "Man screaming being murdered",
+    "author": "EricSueiro",
+    "license": "CC0",
+    "url": "https://freesound.org/s/220819/"
+  },
+  "scream3": {
+    "title": "Victim Screaming",
+    "author": "qubodup",
+    "license": "CC0",
+    "url": "https://freesound.org/s/813310/"
+  },
+  "scream4": {
+    "title": "Scream 1",
+    "author": "HenKonen",
+    "license": "CC0",
+    "url": "https://freesound.org/s/682177/"
+  },
+  "zombie1": {
+    "title": "Zombie Roar 6",
+    "author": "ArriGD",
+    "license": "CC0",
+    "url": "https://freesound.org/s/144004/"
+  },
+  "zombie2": {
+    "title": "Zombie Groan 0",
+    "author": "OwNathan",
+    "license": "CC0",
+    "url": "https://freesound.org/s/754438/"
+  },
+  "zombie3": {
+    "title": "Zombie Growl 5",
+    "author": "tonsil5",
+    "license": "CC0",
+    "url": "https://freesound.org/s/555417/"
+  },
+  "bark1": {
+    "title": "Single Dog Bark",
+    "author": "kwahmah_02",
+    "license": "CC0",
+    "url": "https://freesound.org/s/277058/"
+  },
+  "bark2": {
+    "title": "Animal Dog Bark And Growl 01",
+    "author": "abhisheky948",
+    "license": "CC0",
+    "url": "https://freesound.org/s/625501/"
+  },
+  "hardstyle": {
+    "title": "hardstyle beats 150BPM",
+    "author": "laffik",
+    "license": "CC0",
+    "url": "https://freesound.org/s/647310/"
+  },
+  "intro": {
+    "title": "Metal Riff 85BPM",
+    "author": "jgreer",
+    "license": "CC0",
+    "url": "https://freesound.org/s/585337/"
+  }
+}
