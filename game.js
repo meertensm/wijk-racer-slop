@@ -1486,6 +1486,7 @@ slime.userData.outlineParameters = { visible: false }
 
 function markDead(npc) {
   npc.dead = true
+  hush(npc)
   placeNpc(npc, 0)
   if (npc.splat) return
   npc.splat = new THREE.Mesh(new THREE.CircleGeometry(npc.kind === 'dogwalker' ? 1.4 : 1.2, 12).rotateX(-Math.PI / 2), npc.kind === 'zombie' ? slime : blood)
@@ -2288,6 +2289,7 @@ async function speak(npc, index) {
   if (!lines[index]) return
   hush(npc)
   const track = await playSample(`voice-${npc.kind}-${gender}-${mood}-${index + 1}`, { level: 1.2 })
+  if (npc.dead) return track && track.source.stop()
   if (track) {
     npc.talking = track
     track.source.onended = () => { if (npc.talking === track) npc.talking = null }
@@ -2522,8 +2524,8 @@ const EVENTS = {
   },
   say(id, index) {
     const npc = npcs.get(id)
-    if (!npc || Math.hypot(npc.x - state.x, npc.z - state.z) > 60) return
-    setTimeout(() => speak(npc, index), npc.dead ? 700 : 0)
+    if (!npc || npc.dead || Math.hypot(npc.x - state.x, npc.z - state.z) > 60) return
+    speak(npc, index)
   },
   bark(id) {
     const npc = npcs.get(id)

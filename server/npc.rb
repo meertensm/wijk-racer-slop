@@ -56,9 +56,9 @@ class Npc < Entity
     rand < 0.02 && game.nearest_player(x, z, 40)
   end
 
-  def say(game, interrupt = false)
+  def say(game)
     lines = game.lines_for(self)
-    return if lines.empty? || (!interrupt && game.now < @quiet_until)
+    return if dead || lines.empty? || game.now < @quiet_until
     index        = (rand * lines.length).floor
     @chatted     = game.now
     @quiet_until = game.now + 0.6 + lines[index].split.length * 0.4
@@ -96,8 +96,6 @@ class Npc < Entity
     @speed   = 0.0
     touch
     game.kill(self, player)
-    @chatted = -100.0
-    say(game, true)
   end
 
   def revive
