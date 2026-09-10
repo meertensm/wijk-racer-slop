@@ -9,6 +9,7 @@ class Npc < Entity
   MOODS   = %i[angry]
   LINES   = {}
   RANGE   = 60
+  DENSITY = 1.0
   PAUSE   = 8
 
   attr_reader :speed, :version, :dead, :dead_at, :killer, :home, :voice

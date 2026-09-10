@@ -3,6 +3,7 @@ class Beagle < Npc
   IDLE  = 0.25
   PACE  = 0.6..1.8
   PAUSE = 3
+  DENSITY = 0.3
 
   def chatty?(game)
     return false

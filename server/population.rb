@@ -39,7 +39,9 @@ class Population
   end
 
   def spawn(kind, x, z, heading)
-    npc = CLASSES.fetch(kind).new(npcs.length, x, z, heading, world, random)
+    klass = CLASSES.fetch(kind)
+    return if random.rand > klass::DENSITY
+    npc = klass.new(npcs.length, x, z, heading, world, random)
     npcs << npc
     return unless npc.is_a?(DogWalker)
     npc.dog = Labradoodle.new(npcs.length, npc, world, random)

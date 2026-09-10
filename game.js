@@ -43,9 +43,9 @@ function nextSlide() {
   document.getElementById('player-name').value = localStorage.getItem('playerName') || `Panda-${Math.floor(Math.random() * 900 + 100)}`
 const slideTimer = setInterval(nextSlide, 4000)
 let progress = 0
-const PHASES = { fetch: 3, terrain: 12, stamp: 2, prepare: 3, index: 1, roads: 8, buildings: 30, merge: 10, ground: 20, trees: 3, nature: 3, server: 2 }
+const PHASES = { fetch: 3, terrain: 12, stamp: 2, prepare: 3, index: 1, roads: 8, buildings: 30, merge: 10, ground: 20, trees: 3, details: 3, server: 2 }
 const total = Object.values(PHASES).reduce((a, b) => a + b, 0)
-const LABELS = { fetch: 'Kaart ophalen', terrain: 'Terrein boetseren', stamp: 'Wegen aanleggen', prepare: 'Bruggen bouwen', index: 'Straatnamen leren', roads: 'Asfalt gieten', buildings: 'Huizen metselen', merge: 'Wijken samenvoegen', ground: 'Gras zaaien', trees: 'Bomen planten', nature: 'Bloemen zaaien', server: 'Verbinden met server' }
+const LABELS = { fetch: 'Kaart ophalen', terrain: 'Terrein boetseren', stamp: 'Wegen aanleggen', prepare: 'Bruggen bouwen', index: 'Straatnamen leren', roads: 'Asfalt gieten', buildings: 'Huizen metselen', merge: 'Wijken samenvoegen', ground: 'Gras zaaien', trees: 'Bomen planten', details: 'Kozijnen schilderen', server: 'Verbinden met server' }
 
 async function phase(name, fn) {
   loadingPhase.textContent = LABELS[name] + '…'
@@ -60,7 +60,6 @@ async function phase(name, fn) {
 let world
 await phase('fetch', async () => { world = await fetch(`worlds/${WORLD}.json`, { cache: 'no-store' }).then(response => response.json()) })
 
-const DETAIL = world.buildings.length < 8000
 const COLORS = {
   walls:      [0x9c5a45, 0x6e4636, 0xc9b48a, 0xe8e4da, 0xb8b4ac, 0xa8705a, 0x7a3b2e, 0xd9cdb8, 0x5b4b45, 0xc2a27a, 0xf1ece0, 0x8d6a52].map(hex => new THREE.Color(hex)),
   roofs:      [0x4a3a36, 0x6b3b2f, 0x3e3e44, 0x5a4034, 0x4a4a52, 0x703a30, 0x2f2f33, 0x8a4a3a, 0x555049, 0x3a2e2a, 0x6a5a4a, 0x46403c].map(hex => new THREE.Color(hex)),
@@ -1056,6 +1055,7 @@ function hipRoof(building, groups) {
   const back = ([lx, lz, y]) => [lx * cos - lz * sin, y + top, lx * sin + lz * cos]
   const A = back([minX, minZ, 0]), B = back([maxX, minZ, 0]), C = back([maxX, maxZ, 0]), D = back([minX, maxZ, 0])
   const R1 = back([minX + inset, midZ, rise]), R2 = back([maxX - inset, midZ, rise])
+  building.roofFrame = { angle, cos, sin, minX, maxX, minZ, maxZ, inset, rise, midZ, top, back, A, B, C, D, R1, R2 }
   const uv = ([lx, lz, y]) => [lx, lz + y * 1.3]
   const a = [minX, minZ, 0], b = [maxX, minZ, 0], c = [maxX, maxZ, 0], d = [minX, maxZ, 0], r1 = [minX + inset, midZ, rise], r2 = [maxX - inset, midZ, rise]
   const slopes = new THREE.BufferGeometry()
@@ -1069,12 +1069,15 @@ function hipRoof(building, groups) {
   ends.computeVertexNormals()
   if (inset) groups.tiles.push(paint(ends, COLORS.roofs[building.c]))
   else groups[building.group].push(paint(ends, building.wall))
+  const [chimneyX, , chimneyZ] = back([minX + inset + (maxX - minX - 2 * inset) * 0.3, midZ, 0])
+  groups.plain.push(paint(new THREE.BoxGeometry(0.6, rise + 0.8, 0.6).translate(chimneyX, top + (rise + 0.8) / 2, chimneyZ), COLORS.chimney))
+}
+
+function roofExtras(building, groups) {
+  const { angle, cos, sin, minX, maxX, minZ, maxZ, inset, rise, midZ, top, back, A, B, C, D, R1, R2 } = building.roofFrame
   const ridge = Math.hypot(R2[0] - R1[0], R2[2] - R1[2])
   groups.plain.push(paint(new THREE.BoxGeometry(ridge + 0.3, 0.16, 0.34).rotateY(-angle).translate((R1[0] + R2[0]) / 2, top + rise + 0.04, (R1[2] + R2[2]) / 2), COLORS.roofs[building.c].clone().multiplyScalar(0.7)))
   for (const [P, Q] of [[A, B], [C, D]]) groups.plain.push(paint(new THREE.BoxGeometry(Math.hypot(Q[0] - P[0], Q[2] - P[2]), 0.2, 0.08).rotateY(-angle).translate((P[0] + Q[0]) / 2, top - 0.1, (P[2] + Q[2]) / 2), COLORS.frame))
-
-  const [chimneyX, , chimneyZ] = back([minX + inset + (maxX - minX - 2 * inset) * 0.3, midZ, 0])
-  groups.plain.push(paint(new THREE.BoxGeometry(0.6, rise + 0.8, 0.6).translate(chimneyX, top + (rise + 0.8) / 2, chimneyZ), COLORS.chimney))
   if (maxX - minX > 9 && rise > 1.8 && Math.abs(Math.floor(minX * 7)) % 2 === 0) {
     const [dx, , dz] = back([(minX + maxX) / 2, minZ + (maxZ - minZ) * 0.24, 0]), dy = top + rise * 0.32
     groups.plain.push(paint(new THREE.BoxGeometry(1.5, 1.1, 1.3).rotateY(-angle).translate(dx, dy + 0.55, dz), COLORS.plaster[0]))
@@ -1087,15 +1090,14 @@ function hipRoof(building, groups) {
   }
 }
 
-function facadeDetails(building, groups) {
+function facadeDetails(building, groups, detail) {
   const points = building.p
   const acc = { positions: [], normals: [], colors: [], uvs: [] }
   const white = new THREE.Color(0xffffff)
   const floors = Math.max(1, Math.floor((building.h - 2.3) / 3) + 1)
   const front = frontEdge(building)
   const opening = (cx, cz, ux, uz, nx, nz, width, bottom, height, cell) => {
-    quadInto(acc, cx, cz, ux, uz, nx, nz, width, bottom, height, white, cell)
-    if (!DETAIL) return
+    if (!detail) return quadInto(acc, cx, cz, ux, uz, nx, nz, width, bottom, height, white, cell)
     const rotation = Math.atan2(-uz, ux), ox = cx + nx * 0.07, oz = cz + nz * 0.07
     const bar = (w, h, along, up, color = COLORS.frame) => groups.plain.push(paint(new THREE.BoxGeometry(w, h, 0.1).rotateY(rotation).translate(ox + ux * along, bottom + up, oz + uz * along), color))
     bar(width + 0.16, 0.08, 0, height + 0.04)
@@ -1120,7 +1122,8 @@ function facadeDetails(building, groups) {
     const at = distance => [ax + ux * distance, az + uz * distance]
 
     const brand = building.sign && brandOf(building.sign)
-    if (brand && building.h >= 3 && length >= 6) {
+    if (detail) {
+    } else if (brand && building.h >= 3 && length >= 6) {
       const slots = Math.max(1, Math.floor(length / 10)), step = length / slots
       for (let k = 0; k < slots; k++) {
         const sign = signQuad(building.sign, ...at(step * (k + 0.5)), ux, uz, nx, nz, Math.min(8, step - 1), building.base + building.h - 2.5, 2.2)
@@ -1137,8 +1140,8 @@ function facadeDetails(building, groups) {
     if (i === front && building.h >= 3 && length >= 4.5 && !brand) {
       const [dx, dz] = at(1.1), ground = terrainHeight(dx, dz)
       opening(dx, dz, ux, uz, nx, nz, 1.0, ground, 2.2 + building.base - ground, 1)
-      if (DETAIL) for (const along of [0.25, length - 0.25]) groups.plain.push(paint(new THREE.CylinderGeometry(0.05, 0.05, building.h - 0.3, 6).translate(ax + ux * along + nx * 0.12, building.base + building.h / 2 - 0.15, az + uz * along + nz * 0.12), COLORS.gutter))
-      if (DETAIL) {
+      if (detail) for (const along of [0.25, length - 0.25]) groups.plain.push(paint(new THREE.CylinderGeometry(0.05, 0.05, building.h - 0.3, 6).translate(ax + ux * along + nx * 0.12, building.base + building.h / 2 - 0.15, az + uz * along + nz * 0.12), COLORS.gutter))
+      if (detail) {
         const setback = [4.5, 3.5, 2.5].find(dist => { const hx = mx + nx * dist, hz = mz + nz * dist; return !blocked(hx, hz) && roadDistance(hx, hz) > 2.8 && ['grass', 'ground', 'forest'].includes(kindAt(hx, hz)) })
         if (setback) {
           const rotation = Math.atan2(-uz, ux), hy = terrainHeight(mx + nx * setback, mz + nz * setback)
@@ -1186,17 +1189,127 @@ function buildBuildings(groups) {
     building.wall = building.plaster ? COLORS.plaster[building.c % COLORS.plaster.length] : new THREE.Color(0xffffff).lerp(COLORS.walls[building.c], 0.2)
     const walls = new THREE.ExtrudeGeometry(shape, { depth: building.base + building.h - bottom, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, bottom, 0)
     groups[building.group].push(paint(walls, building.wall))
-    const plinth = new THREE.Shape(offsetRing(building.p, 0.06).map(([x, z]) => new THREE.Vector2(x, -z)))
-    groups.plain.push(paint(new THREE.ExtrudeGeometry(plinth, { depth: building.base - bottom + 0.45, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, bottom, 0), COLORS.plinth))
-    gutters(building, groups.plain)
+    building.bottom = bottom
     if (building.roof === 'hip') hipRoof(building, groups)
-    else if (footprintArea(building.p) > 60) {
-      const [cx, cz] = centroid(building.p)
-      groups.plain.push(paint(new THREE.BoxGeometry(1.4, 0.9, 1.1).translate(cx, building.base + building.h + 0.45, cz), COLORS.concrete))
-    }
-    facadeDetails(building, groups)
-
+    facadeDetails(building, groups, false)
+    const key = tileKey(building.p[0][0], building.p[0][1])
+    if (!buildingTiles.has(key)) buildingTiles.set(key, [])
+    buildingTiles.get(key).push(building)
   })
+}
+
+function buildingExtras(building, groups) {
+  const plinth = new THREE.Shape(offsetRing(building.p, 0.06).map(([x, z]) => new THREE.Vector2(x, -z)))
+  groups.plain.push(paint(new THREE.ExtrudeGeometry(plinth, { depth: building.base - building.bottom + 0.45, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, building.bottom, 0), COLORS.plinth))
+  gutters(building, groups.plain)
+  if (building.roofFrame) roofExtras(building, groups)
+  else if (footprintArea(building.p) > 60) {
+    const [cx, cz] = centroid(building.p)
+    groups.plain.push(paint(new THREE.BoxGeometry(1.4, 0.9, 1.1).translate(cx, building.base + building.h + 0.45, cz), COLORS.concrete))
+  }
+  facadeDetails(building, groups, true)
+}
+
+// DETAIL TILES (kozijnen, goten, heggen, gras en bloemen rond de speler):
+
+const buildingTiles = new Map(), detailTiles = new Map()
+const DETAIL_REACH = 1, DETAIL_KEEP = 2, DETAIL_BATCH = 60
+let detailJob = null, natureShapes = null
+
+function newGroups() {
+  return { plain: [], asphalt: [], paving: [], gravel: [], brickRed: [], brickBrown: [], brickYellow: [], plaster: [], hedge: [], tiles: [], ground: [], sign: [], window: [] }
+}
+
+function mergeGroups(groups) {
+  const meshes = []
+  for (const [name, parts] of Object.entries(groups)) {
+    if (!parts.length) continue
+    const geometries = parts.map(part => {
+      const geometry = part.index ? part.toNonIndexed() : part
+      if (name === 'plain') geometry.deleteAttribute('uv')
+      else if (!geometry.attributes.uv) uvWorld(geometry)
+      return geometry
+    })
+    const mesh = new THREE.Mesh(mergeGeometries(geometries), MATERIALS[name])
+    mesh.castShadow = mesh.receiveShadow = true
+    scene.add(mesh)
+    meshes.push(mesh)
+  }
+  return meshes
+}
+
+function seeded(seed) {
+  let value = (seed >>> 0) || 1
+  return () => (value = (value * 1664525 + 1013904223) >>> 0) / 4294967296
+}
+
+function tileNature(tx, tz) {
+  if (!natureShapes) natureShapes = {
+    tuft: mergeGeometries([[0, 0], [0.12, 0.05], [-0.1, 0.08], [0.04, -0.12], [-0.06, -0.06]].map(([dx, dz], i) => new THREE.ConeGeometry(0.07, 0.3 + (i % 2) * 0.15, 3).translate(dx, 0.15, dz))),
+    bush: blobs([[0, 0.5, 0, 0.6], [0.4, 0.42, 0.2, 0.45], [-0.35, 0.45, -0.25, 0.48], [0.1, 0.8, -0.1, 0.4]]),
+    flower: mergeGeometries([[0, 0], [0.12, 0.08], [-0.1, 0.1]].flatMap(([dx, dz]) => [
+      new THREE.CylinderGeometry(0.012, 0.012, 0.3, 3).translate(dx, 0.15, dz).toNonIndexed(),
+      new THREE.IcosahedronGeometry(0.06, 0).translate(dx, 0.32, dz)
+    ]))
+  }
+  const [minX, minZ, maxX, maxZ] = world.bounds
+  const x0 = Math.max(tx, minX), z0 = Math.max(tz, minZ), x1 = Math.min(tx + TILE, maxX), z1 = Math.min(tz + TILE, maxZ)
+  if (x1 <= x0 || z1 <= z0) return []
+  const rand = seeded(Math.round(tx / TILE) * 73856093 ^ Math.round(tz / TILE) * 19349663)
+  const tufts = [], bushes = [], flowers = [[], [], []]
+  const count = (x1 - x0) * (z1 - z0) / 40
+  for (let i = 0; i < count; i++) {
+    const x = x0 + rand() * (x1 - x0), z = z0 + rand() * (z1 - z0)
+    const kind = kindAt(x, z)
+    if (!['grass', 'forest', 'ground'].includes(kind) || wasteAt(x, z) || !treeFits(x, z)) continue
+    const place = [x, terrainHeight(x, z) - 0.03, z, 0.7 + rand() * 0.8, rand() * 6.28], roll = rand()
+    if (kind === 'forest' ? roll < 0.2 : roll < 0.04) bushes.push(place)
+    else if (roll < 0.1) flowers[Math.floor(rand() * 3)].push(place)
+    else tufts.push(place)
+  }
+  const meshes = [
+    instances(natureShapes.tuft, 0xffffff, tufts, TEXTURES.foliage, 0.16, false, false),
+    instances(natureShapes.bush, 0xffffff, bushes, TEXTURES.foliage, 0.1, false),
+    ...[0xf2d24b, 0xe86aa5, 0xf6f6f2].map((color, i) => instances(natureShapes.flower, color, flowers[i], null, 0, false, false))
+  ].filter(Boolean)
+  meshes.forEach(mesh => { mesh.userData.instanced = true })
+  return meshes
+}
+
+function startDetailTile(kx, kz) {
+  const key = `${kx},${kz}`
+  detailTiles.set(key, [])
+  detailJob = { key, tx: kx * TILE, tz: kz * TILE, buildings: buildingTiles.get(key) || [], index: 0, groups: newGroups() }
+}
+
+function advanceDetailJob(batch = DETAIL_BATCH) {
+  const job = detailJob, end = Math.min(job.buildings.length, job.index + batch)
+  for (; job.index < end; job.index++) buildingExtras(job.buildings[job.index], job.groups)
+  if (job.index < job.buildings.length) return
+  detailTiles.set(job.key, [...mergeGroups(job.groups), ...tileNature(job.tx, job.tz)])
+  detailJob = null
+}
+
+function streamDetails() {
+  if (detailJob) return advanceDetailJob()
+  const cx = Math.floor(state.x / TILE), cz = Math.floor(state.z / TILE)
+  const wanted = []
+  for (let dx = -DETAIL_REACH; dx <= DETAIL_REACH; dx++) for (let dz = -DETAIL_REACH; dz <= DETAIL_REACH; dz++) {
+    const key = `${cx + dx},${cz + dz}`
+    if (!detailTiles.has(key)) wanted.push([Math.hypot((cx + dx + 0.5) * TILE - state.x, (cz + dz + 0.5) * TILE - state.z), cx + dx, cz + dz])
+  }
+  if (wanted.length) return startDetailTile(...wanted.sort((a, b) => a[0] - b[0])[0].slice(1))
+  detailTiles.forEach((meshes, key) => {
+    const [kx, kz] = key.split(',').map(Number)
+    if (Math.abs(kx - cx) <= DETAIL_KEEP && Math.abs(kz - cz) <= DETAIL_KEEP) return
+    meshes.forEach(mesh => { scene.remove(mesh); if (mesh.userData.instanced) mesh.dispose(); else mesh.geometry.dispose() })
+    detailTiles.delete(key)
+  })
+}
+
+function buildDetailsHere() {
+  startDetailTile(Math.floor(state.x / TILE), Math.floor(state.z / TILE))
+  while (detailJob) advanceDetailJob(Infinity)
 }
 
 function offsetRing(points, amount) {
@@ -1293,7 +1406,6 @@ async function buildWorld() {
         } })
         await phase('ground', buildGround)
         await phase('trees', buildTrees)
-  await phase('nature', buildNature)
           buildTrains()
           buildSky()
       }
@@ -1334,6 +1446,11 @@ function branch(x, y, z, length, tiltX, tiltZ) {
   return new THREE.CylinderGeometry(0.05, 0.11, length, 5).translate(0, length / 2, 0).rotateX(tiltX).rotateZ(tiltZ).translate(x, y, z)
 }
 
+function treeScale(x, z) {
+  const r = Math.abs((x * 7 + z * 13) % 10) / 10, giant = (Math.abs(x * 11 + z * 3) | 0) % 7 === 0
+  return 0.7 + r * 0.9 + (giant ? 1.0 + r * 0.5 : 0)
+}
+
 function treeFits(x, z) {
   if (blocked(x, z)) return false
   const { segment, distance } = nearestSegment(x, z)
@@ -1341,7 +1458,7 @@ function treeFits(x, z) {
 }
 
 function buildTrees() {
-  const placements = world.trees.filter(([x, z]) => treeFits(x, z)).map(([x, z]) => [x, terrainHeight(x, z) - 0.1, z, 0.8 + ((x * 7 + z * 13) % 10) / 20, (x * 3.1 + z * 1.7) % 6.28])
+  const placements = world.trees.filter(([x, z]) => treeFits(x, z)).map(([x, z]) => [x, terrainHeight(x, z) - 0.1, z, treeScale(x, z), (x * 3.1 + z * 1.7) % 6.28])
   const dead = placements.filter(([x, , z]) => wasteAt(x, z))
   const alive = placements.filter(p => !dead.includes(p))
   const conifers = alive.filter(([x, , z]) => (Math.abs(x * 3 + z * 5) | 0) % 4 === 0)
@@ -1364,29 +1481,6 @@ function buildTrees() {
     new THREE.ConeGeometry(1.35, 2.4, 8).translate(0, 4.0, 0),
     new THREE.ConeGeometry(0.85, 2.2, 8).translate(0, 5.3, 0)
   ]), 0xffffff, conifers, TEXTURES.foliage, 0.08)
-}
-
-function buildNature() {
-  const [minX, minZ, maxX, maxZ] = world.bounds
-  const tufts = [], bushes = [], flowers = [[], [], []]
-  const count = Math.min(60000, (maxX - minX) * (maxZ - minZ) / 40)
-  for (let i = 0; i < count; i++) {
-    const x = minX + random() * (maxX - minX), z = minZ + random() * (maxZ - minZ)
-    const kind = kindAt(x, z)
-    if (!['grass', 'forest', 'ground'].includes(kind) || wasteAt(x, z) || !treeFits(x, z)) continue
-    const place = [x, terrainHeight(x, z) - 0.03, z, 0.7 + random() * 0.8, random() * 6.28], roll = random()
-    if (kind === 'forest' ? roll < 0.2 : roll < 0.04) bushes.push(place)
-    else if (roll < 0.1) flowers[Math.floor(random() * 3)].push(place)
-    else tufts.push(place)
-  }
-  const tuft = mergeGeometries([[0, 0], [0.12, 0.05], [-0.1, 0.08], [0.04, -0.12], [-0.06, -0.06]].map(([dx, dz], i) => new THREE.ConeGeometry(0.07, 0.3 + (i % 2) * 0.15, 3).translate(dx, 0.15, dz)))
-  instances(tuft, 0xffffff, tufts, TEXTURES.foliage, 0.16, true, false)
-  instances(blobs([[0, 0.5, 0, 0.6], [0.4, 0.42, 0.2, 0.45], [-0.35, 0.45, -0.25, 0.48], [0.1, 0.8, -0.1, 0.4]]), 0xffffff, bushes, TEXTURES.foliage, 0.1)
-  const flower = mergeGeometries([[0, 0], [0.12, 0.08], [-0.1, 0.1]].flatMap(([dx, dz]) => [
-    new THREE.CylinderGeometry(0.012, 0.012, 0.3, 3).translate(dx, 0.15, dz).toNonIndexed(),
-    new THREE.IcosahedronGeometry(0.06, 0).translate(dx, 0.32, dz)
-  ]))
-  ;[0xf2d24b, 0xe86aa5, 0xf6f6f2].forEach((color, i) => instances(flower, color, flowers[i], null, 0, true, false))
 }
 
 let skyDome, clouds
@@ -2965,7 +3059,7 @@ function travelTo(name) {
 travelList.addEventListener('click', event => { const item = event.target.closest('li'); if (item) travelTo(item.dataset.name) })
 
 const keys = new Set()
-window.debug = { keys, npcs, poops, others, travelTo, SIGNS, signs, camera, scene, MATERIALS, respawn, unstick, applySnapshot, applyFrame, EVENTS, get socket() { return socket }, get myId() { return myId }, get engineSample() { return engineSample }, get screech() { return screech }, get hardstyleSampled() { return hardstyleSampled }, get explosion() { return explosion }, get audio() { return audio }, get metal() { return metal }, get state() { return state } }
+window.debug = { keys, npcs, poops, others, detailTiles, travelTo, SIGNS, signs, camera, scene, MATERIALS, respawn, unstick, applySnapshot, applyFrame, EVENTS, get socket() { return socket }, get myId() { return myId }, get engineSample() { return engineSample }, get screech() { return screech }, get hardstyleSampled() { return hardstyleSampled }, get explosion() { return explosion }, get audio() { return audio }, get metal() { return metal }, get state() { return state } }
 addEventListener('keydown', event => {
   if (event.code === 'Escape' && !travel.hidden) return toggleTravel(false)
   if (event.code === 'Escape' && !/INPUT|TEXTAREA/.test(event.target.tagName)) return toggleBigMap()
@@ -3105,6 +3199,7 @@ function step(dt, now) {
     streetEl.textContent = streetName(state.x, state.z)
   }
   streamRoadTiles(2, 1)
+  streamDetails()
   updateNpcs(dt, now)
   pickUpPoop()
   pooTrail(now)
@@ -3151,6 +3246,7 @@ console.info(`ready: ${Math.round(performance.now())} ms`)
 clearInterval(slideTimer)
 stopMetal()
 nameInput.blur()
+await phase('details', buildDetailsHere)
 await phase('server', connect)
 renderPlayers()
 loadingEl.classList.add('done')
