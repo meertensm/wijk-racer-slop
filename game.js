@@ -3,7 +3,53 @@ import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 
 const WORLD = new URLSearchParams(location.search).get('world') || 'sittard-geleen'
-const world = await fetch(`worlds/${WORLD}.json`, { cache: 'no-store' }).then(response => response.json())
+
+// LOADING SCREEN:
+
+const TIPS = [
+  'Rij een niet poep oprapende labradoodle uitlater omver voor een G-Point.',
+  'Binnen 5 seconden achteruit en weer vooruit over hem heen: twee halve G-Points extra.',
+  'De labradoodle is onsterfelijk en rent weg. Beagles ook onsterfelijk, maar dan ontploft jouw Panda.',
+  'In Einighausen lopen alleen kale mannetjes rond.',
+  'Druk op T om naar een supermarkt, skatebaan of station te springen.',
+  'Bij het eet.nu-kantoor aan de Brugstraat staat iemand voor de deur.',
+  'Shift is de handrem. De Panda haalt 150 op de A2.',
+  'Het terrein is echt: AHN-hoogtedata, het Julianakanaal ligt hoger dan Urmond.'
+]
+const loadingEl = document.getElementById('loading')
+const loadingBar = loadingEl.querySelector('#loading-bar i')
+const loadingPhase = document.getElementById('loading-phase')
+const loadingSlides = document.getElementById('loading-slides')
+document.getElementById('loading-tip').textContent = TIPS[Math.floor(Math.random() * TIPS.length)]
+let snapshots = []
+try { snapshots = JSON.parse(localStorage.getItem('snapshots') || '[]') } catch {}
+let slide = 0
+function nextSlide() {
+  if (!snapshots.length) return
+  const img = document.createElement('img')
+  img.src = snapshots[slide++ % snapshots.length]
+  loadingSlides.append(img)
+  while (loadingSlides.children.length > 2) loadingSlides.firstChild.remove()
+}
+nextSlide()
+const slideTimer = setInterval(nextSlide, 4000)
+let progress = 0
+const PHASES = { fetch: 3, terrain: 12, stamp: 2, prepare: 3, index: 1, roads: 8, buildings: 30, merge: 10, ground: 20, trees: 3, walkers: 8 }
+const total = Object.values(PHASES).reduce((a, b) => a + b, 0)
+const LABELS = { fetch: 'Kaart ophalen', terrain: 'Terrein boetseren', stamp: 'Wegen aanleggen', prepare: 'Bruggen bouwen', index: 'Straatnamen leren', roads: 'Asfalt gieten', buildings: 'Huizen metselen', merge: 'Wijken samenvoegen', ground: 'Gras zaaien', trees: 'Bomen planten', walkers: 'Beagles loslaten' }
+
+async function phase(name, fn) {
+  loadingPhase.textContent = LABELS[name] + '…'
+  await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 16)))
+  const started = performance.now()
+  await fn()
+  progress += PHASES[name]
+  loadingBar.style.width = `${Math.round(progress / total * 100)}%`
+  console.info(`${name}: ${Math.round(performance.now() - started)} ms`)
+}
+
+let world
+await phase('fetch', async () => { world = await fetch(`worlds/${WORLD}.json`, { cache: 'no-store' }).then(response => response.json()) })
 
 const COLORS = {
   walls:      [0x9c5a45, 0x6e4636, 0xc9b48a, 0xe8e4da, 0xb8b4ac, 0xa8705a].map(hex => new THREE.Color(hex)),
@@ -233,11 +279,13 @@ function digWater() {
     const samples = road.p.map(([x, z]) => terrainHeight(x, z)).sort((a, b) => a - b)
     road.level = samples[Math.floor(samples.length / 2)]
     const reach = road.w / 2 + T.sx * 0.6
-    const xs = road.p.map(p => p[0]), zs = road.p.map(p => p[1])
-    const c0 = clamp(Math.floor((Math.min(...xs) - reach - T.x0) / T.sx), 0, T.cols - 1), c1 = clamp(Math.ceil((Math.max(...xs) + reach - T.x0) / T.sx), 0, T.cols - 1)
-    const r0 = clamp(Math.floor((Math.min(...zs) - reach - T.z0) / T.sz), 0, T.rows - 1), r1 = clamp(Math.ceil((Math.max(...zs) + reach - T.z0) / T.sz), 0, T.rows - 1)
-    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
-      if (polylineDistance(T.x0 + c * T.sx, T.z0 + r * T.sz, road.p) < reach) T.heights[r * T.cols + c] = Math.min(T.heights[r * T.cols + c], road.level - 3)
+    for (let i = 1; i < road.p.length; i++) {
+      const a = road.p[i - 1], b = road.p[i]
+      const c0 = clamp(Math.floor((Math.min(a[0], b[0]) - reach - T.x0) / T.sx), 0, T.cols - 1), c1 = clamp(Math.ceil((Math.max(a[0], b[0]) + reach - T.x0) / T.sx), 0, T.cols - 1)
+      const r0 = clamp(Math.floor((Math.min(a[1], b[1]) - reach - T.z0) / T.sz), 0, T.rows - 1), r1 = clamp(Math.ceil((Math.max(a[1], b[1]) + reach - T.z0) / T.sz), 0, T.rows - 1)
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+        if (pointToSegment(T.x0 + c * T.sx, T.z0 + r * T.sz, a, b).distance < reach) T.heights[r * T.cols + c] = Math.min(T.heights[r * T.cols + c], road.level - 3)
+      }
     }
   })
 }
@@ -372,6 +420,73 @@ function trim(points, cutStart, cutEnd) {
   return cut(cut([...points], cutStart).reverse(), cutEnd).reverse()
 }
 
+function boundary(keep, drop, predicate) {
+  let a = keep, b = drop
+  for (let i = 0; i < 6; i++) {
+    const x = (a[0] + b[0]) / 2, z = (a[1] + b[1]) / 2
+    const mid = [x, z, (a[2] + b[2]) / 2, a[3]]
+    if (predicate(mid)) b = mid
+    else a = mid
+  }
+  return a
+}
+
+function splitWhere(points, predicate) {
+  const pieces = []
+  let piece = []
+  points.forEach((point, i) => {
+    if (predicate(point)) {
+      if (piece.length) piece.push(boundary(piece[piece.length - 1], point, predicate))
+      if (piece.length > 1) pieces.push(piece)
+      piece = []
+    } else {
+      if (!piece.length && i > 0) piece.push(boundary(point, points[i - 1], predicate))
+      piece.push(point)
+    }
+  })
+  if (piece.length > 1) pieces.push(piece)
+  return pieces
+}
+
+function onAnyAsphalt(x, z, margin) {
+  return onOtherAsphalt(x, z, null, margin)
+}
+
+function junctionCorners(nodes, parts) {
+  nodes.forEach((roads, key) => {
+    const walkable = roads.filter(road => road.w >= 5 && road.w <= 8 && !road.elevated && !road.dual)
+    if (roads.length < 2 || !walkable.length) return
+    const [x, z] = key.split(',').map(Number)
+    const outer = Math.max(...roads.map(road => road.w)) / 2 + 1.55
+    const inner = Math.min(...roads.map(road => road.w)) / 2 - 0.3
+    const steps = 40, rings = 3
+    const acc = { positions: [], normals: [], colors: [] }
+    const at = (ring, step) => {
+      const radius = inner + (outer - inner) * ring / rings, angle = step / steps * Math.PI * 2
+      return [x + Math.cos(angle) * radius, z + Math.sin(angle) * radius]
+    }
+    for (let step = 0; step < steps; step++) for (let ring = 0; ring < rings; ring++) {
+      const corners = [at(ring, step), at(ring + 1, step), at(ring + 1, step + 1), at(ring, step + 1)]
+      if (corners.some(([px, pz]) => onAnyAsphalt(px, pz, 0.35))) continue
+      const [a, b, c, d] = corners.map(([px, pz]) => [px, terrainHeight(px, pz) + 0.26, pz])
+      acc.positions.push(...a, ...b, ...c, ...a, ...c, ...d)
+      for (let k = 0; k < 6; k++) { acc.normals.push(0, 1, 0); acc.colors.push(COLORS.sidewalk.r, COLORS.sidewalk.g, COLORS.sidewalk.b) }
+    }
+    if (acc.positions.length) parts.push(flush(acc))
+  })
+}
+
+function onOtherAsphalt(x, z, road, margin) {
+  const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL)
+  for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+    for (const i of segmentGrid.get(`${cx + dx},${cz + dz}`) || []) {
+      const segment = segments[i]
+      if (segment.road !== road && pointToSegment(x, z, segment.a, segment.b).distance < segment.road.w / 2 + margin) return true
+    }
+  }
+  return false
+}
+
 function cutOut(points, gaps) {
   const pieces = []
   let piece = [], travelled = 0
@@ -419,9 +534,9 @@ function disc([x, z, y, elevated], radius, lift) {
   return geometry
 }
 
-function strip(road, width, lift, color, parts) {
+function strip(road, width, lift, color, parts, nodes = road.nodes) {
   parts.push(paint(ribbon(road.samples, width, lift), color))
-  if (width >= 3) road.nodes.forEach(node => parts.push(paint(disc(node, width / 2, lift), color)))
+  if (width >= 3) nodes.forEach(node => parts.push(paint(disc(node, width / 2, lift), color)))
 }
 
 function dashes(points, parts) {
@@ -468,9 +583,11 @@ function buildRoads(groups) {
     } else if (road.kind === 'path') {
       strip(road, Math.min(road.w, 1.5), 0.12, COLORS.path, groups.paving)
     } else {
-      strip(road, road.w, 0.22, COLORS.road, groups.asphalt)
-      if (road.w >= 5 && road.w <= 8 && !road.elevated) {
-        cutOut(points, gaps(road, 0)).forEach(walk => {
+      const ends = [road.p[0], road.p[road.p.length - 1]].map(point => point.join(','))
+      const capped = road.nodes.filter((node, i) => !ends.includes(road.p[i].join(',')) || nodes.get(road.p[i].join(',')).some(other => other !== road && other.w >= road.w))
+      strip(road, road.w, 0.22, COLORS.road, groups.asphalt, capped)
+      if (road.w >= 5 && road.w <= 8 && !road.elevated && !road.dual) {
+        splitWhere(points, ([x, z]) => onOtherAsphalt(x, z, road, 0.4)).forEach(walk => {
           for (const side of [-1, 1]) {
             const inner = band(walk, side * (road.w / 2 + 0.05), 1.5, 0.26, COLORS.sidewalk, groups.paving)
             groups.plain.push(paint(skirt(inner, inner.map(([x, y, z]) => [x, y - 0.1, z])), COLORS.curb))
@@ -480,16 +597,17 @@ function buildRoads(groups) {
         })
       }
       if (road.w >= 7 || road.dual) {
-        cutOut(points, gaps(road, 3)).forEach(marks => {
+            splitWhere(points, ([x, z]) => onOtherAsphalt(x, z, road, 2.5)).forEach(marks => {
           if (!road.dual) dashes(marks, groups.plain)
           for (const side of [-1, 1]) band(marks, side * (road.w / 2 - 0.35), 0.12, 0.2, COLORS.dash, groups.plain)
         })
       }
-      if (road.bridge) bridge(points, road.w, groups.plain)
-      else if (road.elevated) embankment(points, road.w, groups.ground)
-    }
-  })
-}
+            if (road.bridge) bridge(points, road.w, groups.plain)
+            else if (road.elevated) embankment(points, road.w, groups.ground)
+          }
+        })
+        junctionCorners(nodes, groups.paving)
+      }
 
 function bridge(points, width, parts) {
   const sides = edges(points, width + 1)
@@ -526,6 +644,26 @@ function embankment(points, width, parts) {
   }
 }
 
+function quadInto(acc, cx, cz, ux, uz, nx, nz, width, bottom, height, color) {
+  if (ux * nz - uz * nx < 0) { ux = -ux; uz = -uz }
+  const ox = nx * 0.04, oz = nz * 0.04, half = width / 2
+  const x0 = cx - ux * half + ox, z0 = cz - uz * half + oz, x1 = cx + ux * half + ox, z1 = cz + uz * half + oz
+  const top = bottom + height
+  acc.positions.push(x0, bottom, z0, x1, bottom, z1, x1, top, z1, x0, bottom, z0, x1, top, z1, x0, top, z0)
+  for (let k = 0; k < 6; k++) {
+    acc.normals.push(nx, 0, nz)
+    acc.colors.push(color.r, color.g, color.b)
+  }
+}
+
+function flush(acc) {
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(acc.positions, 3))
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(acc.normals, 3))
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(acc.colors, 3))
+  return geometry
+}
+
 function hipRoof(building, groups) {
   const points = building.p
   let angle = 0, longest = 0
@@ -557,6 +695,7 @@ function hipRoof(building, groups) {
 
 function facadeDetails(building, parts, signParts) {
   const points = building.p
+  const acc = { positions: [], normals: [], colors: [] }
   const floors = Math.max(1, Math.floor((building.h - 2.3) / 3) + 1)
   const front = frontEdge(building)
   points.forEach(([ax, az], i) => {
@@ -586,12 +725,13 @@ function facadeDetails(building, parts, signParts) {
     for (let k = 1; k <= count; k++) {
       const cx = ax + ux * spacing * k, cz = az + uz * spacing * k
       for (let floor = 0; floor < (brand ? 1 : floors); floor++) {
-        if (i === front && floor === 0 && k === 1 && building.h >= 3) parts.push(quad(cx, cz, ux, uz, nx, nz, 1.0, terrainHeight(cx, cz), 2.2 + building.base - terrainHeight(cx, cz), COLORS.door))
-        else parts.push(quad(cx, cz, ux, uz, nx, nz, 1.1, building.base + floor * 3 + 1, 1.3, COLORS.glass))
-      }
-    }
-  })
-}
+              if (i === front && floor === 0 && k === 1 && building.h >= 3) quadInto(acc, cx, cz, ux, uz, nx, nz, 1.0, terrainHeight(cx, cz), 2.2 + building.base - terrainHeight(cx, cz), COLORS.door)
+              else quadInto(acc, cx, cz, ux, uz, nx, nz, 1.1, building.base + floor * 3 + 1, 1.3, COLORS.glass)
+            }
+          }
+        })
+        if (acc.positions.length) parts.push(flush(acc))
+        }
 
 function frontEdge(building) {
   let best = -1, bestDistance = 60
@@ -618,17 +758,18 @@ function buildBuildings(groups) {
 
 function buildGround() {
   const [minX, minZ, maxX, maxZ] = world.bounds
-  const areaGrid = new Map()
-  world.areas.forEach((area, i) => {
+  const kinds = new Uint8Array(T.cols * T.rows)
+  const KINDS_BY_INDEX = ['ground', 'grass', 'forest', 'field', 'water', 'parking', 'lot']
+  world.areas.forEach(area => {
+    const kind = KINDS_BY_INDEX.indexOf(area.kind)
+    if (kind < 0) return
     const xs = area.p.map(p => p[0]), zs = area.p.map(p => p[1])
-    for (let x = Math.floor(Math.min(...xs) / CELL); x <= Math.floor(Math.max(...xs) / CELL); x++)
-      for (let z = Math.floor(Math.min(...zs) / CELL); z <= Math.floor(Math.max(...zs) / CELL); z++) {
-        const key = `${x},${z}`
-        if (!areaGrid.has(key)) areaGrid.set(key, [])
-        areaGrid.get(key).push(i)
-      }
+    const c0 = clamp(Math.floor((Math.min(...xs) - T.x0) / T.sx), 0, T.cols - 1), c1 = clamp(Math.ceil((Math.max(...xs) - T.x0) / T.sx), 0, T.cols - 1)
+    const r0 = clamp(Math.floor((Math.min(...zs) - T.z0) / T.sz), 0, T.rows - 1), r1 = clamp(Math.ceil((Math.max(...zs) - T.z0) / T.sz), 0, T.rows - 1)
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (inside(area.p, T.x0 + c * T.sx, T.z0 + r * T.sz)) kinds[r * T.cols + c] = kind
   })
-  const segments = Math.round(TILE / Math.min(T.sx, T.sz, 10)) * 2
+  const kindAt = (x, z) => KINDS_BY_INDEX[kinds[clamp(Math.round((z - T.z0) / T.sz), 0, T.rows - 1) * T.cols + clamp(Math.round((x - T.x0) / T.sx), 0, T.cols - 1)]]
+  const segments = Math.round(TILE / Math.min(T.sx, T.sz, 10))
   for (let tx = minX; tx < maxX; tx += TILE) for (let tz = minZ; tz < maxZ; tz += TILE) {
     const width = Math.min(TILE, maxX - tx), depth = Math.min(TILE, maxZ - tz)
     const geometry = new THREE.PlaneGeometry(width, depth, segments, segments).rotateX(-Math.PI / 2).translate(tx + width / 2, 0, tz + depth / 2)
@@ -637,8 +778,7 @@ function buildGround() {
     for (let i = 0; i < position.count; i++) {
       const x = position.getX(i), z = position.getZ(i)
       position.setY(i, terrainHeight(x, z))
-      let color = COLORS.ground
-      for (const index of areaGrid.get(cellKey(x, z)) || []) if (inside(world.areas[index].p, x, z)) color = COLORS[world.areas[index].kind]
+      const color = COLORS[kindAt(x, z)]
       colors.set([color.r, color.g, color.b], i * 3)
     }
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
@@ -650,11 +790,11 @@ function buildGround() {
   }
 }
 
-function buildWorld() {
+async function buildWorld() {
   const groups = { plain: [], asphalt: [], paving: [], brick: [], tiles: [], ground: [], sign: [] }
-  buildRoads(groups)
-  buildBuildings(groups)
-  for (const [name, parts] of Object.entries(groups)) {
+  await phase('roads', () => buildRoads(groups))
+  await phase('buildings', () => buildBuildings(groups))
+  await phase('merge', () => { for (const [name, parts] of Object.entries(groups)) {
     const tiles = new Map()
     parts.forEach(part => {
       const geometry = part.index ? part.toNonIndexed() : part
@@ -666,16 +806,16 @@ function buildWorld() {
       if (!tiles.has(key)) tiles.set(key, [])
       tiles.get(key).push(geometry)
     })
-    tiles.forEach(geometries => {
-      const mesh = new THREE.Mesh(mergeGeometries(geometries), MATERIALS[name])
-      mesh.castShadow = mesh.receiveShadow = true
-      scene.add(mesh)
-    })
-  }
-  buildGround()
-  buildTrees()
-  buildSky()
-}
+        tiles.forEach(geometries => {
+          const mesh = new THREE.Mesh(mergeGeometries(geometries), MATERIALS[name])
+          mesh.castShadow = mesh.receiveShadow = true
+          scene.add(mesh)
+        })
+        } })
+        await phase('ground', buildGround)
+        await phase('trees', buildTrees)
+        buildSky()
+      }
 
 const TILE = 400
 const tileKey = (x, z) => `${Math.floor(x / TILE)},${Math.floor(z / TILE)}`
@@ -994,12 +1134,14 @@ const coinGeometry = new THREE.CylinderGeometry(0.6, 0.6, 0.1, 24).rotateX(Math.
 const coins = []
 let gpunten = Number(localStorage.getItem('gpunten') || 0)
 coinsEl.querySelector('span').textContent = gpunten.toLocaleString('nl-NL')
+coinsEl.hidden = gpunten === 0
 
 function awardCoin(x, z, amount = 1) {
   gpunten += amount
   localStorage.setItem('gpunten', gpunten)
-    coinsEl.querySelector('span').textContent = gpunten.toLocaleString('nl-NL')
-  coinsEl.classList.remove('bump')
+      coinsEl.querySelector('span').textContent = gpunten.toLocaleString('nl-NL')
+      coinsEl.hidden = false
+      coinsEl.classList.remove('bump')
   requestAnimationFrame(() => coinsEl.classList.add('bump'))
   const coin = new THREE.Mesh(coinGeometry, coinMaterial)
   coin.position.set(x, groundHeight(x, z) + 1, z)
@@ -1246,14 +1388,17 @@ index(world.buildings, building => {
   const xs = building.p.map(p => p[0]), zs = building.p.map(p => p[1])
   return [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)]
 })
-smoothTerrain()
-digWater()
-stampRoads()
-prepareRoads()
-indexRoads()
-buildWorld()
+await phase('terrain', () => { smoothTerrain(); digWater() })
+await phase('stamp', stampRoads)
+await phase('prepare', prepareRoads)
+await phase('index', indexRoads)
+await buildWorld()
 const car = buildCar()
-buildWalkers()
+await phase('walkers', buildWalkers)
+console.info(`ready: ${Math.round(performance.now())} ms`)
+clearInterval(slideTimer)
+loadingEl.classList.add('done')
+setTimeout(() => loadingEl.remove(), 900)
 
 // FAST TRAVEL:
 
@@ -1398,11 +1543,24 @@ function step(dt, now) {
 
 camera.position.set(state.x - Math.sin(state.heading) * 9, groundHeight(state.x, state.z) + 4.5, state.z - Math.cos(state.heading) * 9)
 
+let snapshotAt = performance.now() + 20000
+
+function snapshot() {
+  const canvas = document.createElement('canvas')
+  canvas.width = 640
+  canvas.height = 400
+  canvas.getContext('2d').drawImage(renderer.domElement, 0, 0, 640, 400)
+  snapshots.push(canvas.toDataURL('image/jpeg', 0.6))
+  while (snapshots.length > 8) snapshots.shift()
+  try { localStorage.setItem('snapshots', JSON.stringify(snapshots)) } catch {}
+}
+
 function frame(now) {
   const dt = Math.min((now - last) / 1000, 0.05)
   last = now
   step(dt, now)
   effect.render(scene, camera)
+  if (now > snapshotAt && Math.abs(state.speed) > 5) { snapshotAt = now + 45000; snapshot() }
   requestAnimationFrame(frame)
 }
 requestAnimationFrame(frame)

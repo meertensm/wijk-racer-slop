@@ -28,6 +28,19 @@
     #townsign { position: fixed; top: 18%; left: 50%; transform: translateX(-50%); padding: 14px 36px; border: 5px solid #fff; outline: 3px solid #0d4fa0; border-radius: 6px; background: #0d4fa0; color: #fff; font: 700 44px/1 system-ui, sans-serif; letter-spacing: .02em; text-transform: uppercase; opacity: 0; pointer-events: none; }
     #townsign.show { animation: townsign 4.5s ease-in-out forwards; }
     @keyframes townsign { 0% { opacity: 0; transform: translate(-50%, -20px); } 12% { opacity: 1; transform: translate(-50%, 0); } 75% { opacity: 1; } 100% { opacity: 0; } }
+    #loading { position: fixed; inset: 0; z-index: 10; background: #0b0d12; color: #fff; overflow: hidden; transition: opacity .8s; }
+    #loading.done { opacity: 0; pointer-events: none; }
+    #loading-slides img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; animation: kenburns 9s ease-out forwards, fadein 1.2s ease-out; }
+    #loading-shade { position: absolute; inset: 0; background: linear-gradient(to top, rgba(0, 0, 0, .92) 0%, rgba(0, 0, 0, .35) 45%, rgba(0, 0, 0, 0) 100%); }
+    #loading-text { position: absolute; left: 6vw; right: 6vw; bottom: 8vh; font-family: system-ui, sans-serif; }
+    #loading-text h1 { margin: 0; font-size: 72px; font-weight: 900; letter-spacing: .02em; text-transform: uppercase; line-height: 1; text-shadow: 0 4px 24px rgba(0, 0, 0, .8); }
+    #loading-text h2 { margin: 6px 0 22px; font-size: 24px; font-weight: 500; color: #ffd166; letter-spacing: .12em; text-transform: uppercase; }
+    #loading-tip { max-width: 640px; font-size: 18px; line-height: 1.4; opacity: .9; }
+    #loading-bar { height: 6px; background: rgba(255, 255, 255, .2); border-radius: 3px; overflow: hidden; margin-top: 18px; }
+    #loading-bar i { display: block; height: 100%; width: 0; background: #ffd166; transition: width .4s; }
+    #loading-phase { display: block; margin-top: 8px; font-size: 14px; opacity: .7; }
+    @keyframes kenburns { from { transform: scale(1); } to { transform: scale(1.12) translate(-1.5%, -1%); } }
+    @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
     #minimap { position: fixed; left: 24px; bottom: 20px; width: 200px; height: 200px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, .85); background: #cfe3b5; box-shadow: 0 4px 16px rgba(0, 0, 0, .35); }
   </style>
   <script type="importmap">
@@ -40,6 +53,17 @@
   </script>
 </head>
 <body>
+<div id="loading">
+  <div id="loading-slides"></div>
+  <div id="loading-shade"></div>
+  <div id="loading-text">
+    <h1>Wijk Racer</h1>
+    <h2>Sittard-Geleen</h2>
+    <p id="loading-tip"></p>
+    <div id="loading-bar"><i></i></div>
+    <small id="loading-phase">Laden…</small>
+  </div>
+</div>
 <div id="hint">Pijltjes of WASD · Shift = handrem · T = fast travel</div>
 <div id="coins"><img src="assets/gcoin.jpg" alt=""> <span>0</span> G-Points</div>
 <div id="townsign"></div>
