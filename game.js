@@ -45,7 +45,7 @@ async function phase(name, fn) {
   loadingPhase.textContent = LABELS[name] + '…'
   await new Promise(resolve => setTimeout(resolve, 20))
   const started = performance.now()
-  await fn()
+  try { await fn() } catch (error) { console.error(`phase ${name} failed: ${error.stack}`); loadingPhase.textContent = `Fout in ${LABELS[name]}: ${error.message}`; throw error }
   progress += PHASES[name]
   loadingBar.style.width = `${Math.round(progress / total * 100)}%`
   console.info(`${name}: ${Math.round(performance.now() - started)} ms`)
