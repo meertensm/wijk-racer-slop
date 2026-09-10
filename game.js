@@ -112,8 +112,44 @@ scene.add(sun, sun.target)
 const gradient = new THREE.DataTexture(new Uint8Array([110, 110, 110, 255, 185, 185, 185, 255, 255, 255, 255, 255]), 3, 1)
 gradient.minFilter = gradient.magFilter = THREE.NearestFilter
 gradient.needsUpdate = true
-const toon = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: gradient, side: THREE.DoubleSide })
-const solid = (color, map) => new THREE.MeshToonMaterial({ color, gradientMap: gradient, ...(map && { map }) })
+// POOP INFECTION:
+
+const POOP_SLOTS = 16
+const poopUniform = { value: Array.from({ length: POOP_SLOTS }, () => new THREE.Vector4()) }
+
+function infectable(material) {
+  material.onBeforeCompile = shader => {
+    shader.uniforms.poops = poopUniform
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vPoopWorld;')
+      .replace('#include <project_vertex>', [
+        'vec4 poopWorld = vec4(transformed, 1.0);',
+        '#ifdef USE_INSTANCING',
+        'poopWorld = instanceMatrix * poopWorld;',
+        '#endif',
+        'vPoopWorld = (modelMatrix * poopWorld).xyz;',
+        '#include <project_vertex>'
+      ].join('\n'))
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\nvarying vec3 vPoopWorld;\nuniform vec4 poops[${POOP_SLOTS}];`)
+      .replace('#include <dithering_fragment>', [
+        '#include <dithering_fragment>',
+        'float infected = 0.0;',
+        `for (int i = 0; i < ${POOP_SLOTS}; i++) {`,
+        '  vec4 poop = poops[i];',
+        '  if (poop.w <= 0.0) continue;',
+        '  float d = distance(vPoopWorld.xz, poop.xz);',
+        '  infected = max(infected, smoothstep(poop.w, poop.w * 0.75, d));',
+        '}',
+        'float lum = dot(gl_FragColor.rgb, vec3(0.299, 0.587, 0.114));',
+        'gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(lum) * 0.92, infected);'
+      ].join('\n'))
+  }
+  return material
+}
+
+const toon = infectable(new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: gradient, side: THREE.DoubleSide }))
+const solid = (color, map) => infectable(new THREE.MeshToonMaterial({ color, gradientMap: gradient, ...(map && { map }) }))
 
 // TEXTURES:
 
@@ -194,7 +230,7 @@ const TEXTURES = {
   })
 }
 
-const textured = map => new THREE.MeshToonMaterial({ map, vertexColors: true, gradientMap: gradient, side: THREE.DoubleSide })
+const textured = map => infectable(new THREE.MeshToonMaterial({ map, vertexColors: true, gradientMap: gradient, side: THREE.DoubleSide }))
 const MATERIALS = { plain: toon, asphalt: textured(TEXTURES.asphalt), paving: textured(TEXTURES.paving), brick: textured(TEXTURES.brick), tiles: textured(TEXTURES.tiles), ground: textured(TEXTURES.grass), window: textured(TEXTURES.window) }
 MATERIALS.window.map.wrapS = MATERIALS.window.map.wrapT = THREE.ClampToEdgeWrapping
 MATERIALS.window.map.repeat.set(1, 1)
@@ -240,7 +276,7 @@ function signAtlas(signs) {
 
 const SIGNS = [...new Set(world.buildings.map(building => building.sign).filter(Boolean))].sort((a, b) => (brandOf(b) ? 1 : 0) - (brandOf(a) ? 1 : 0)).slice(0, 128)
 const signs = signAtlas(SIGNS)
-MATERIALS.sign = new THREE.MeshToonMaterial({ map: signs.map, gradientMap: gradient, side: THREE.DoubleSide })
+MATERIALS.sign = infectable(new THREE.MeshToonMaterial({ map: signs.map, gradientMap: gradient, side: THREE.DoubleSide }))
 MATERIALS.sign.userData.outlineParameters = { visible: false }
 
 function signQuad(sign, cx, cz, ux, uz, nx, nz, width, bottom, height) {
@@ -1059,7 +1095,7 @@ function labradoodleGeometry() {
 const KINDS = {
   beagle:    { geometry: beagleGeometry,    label: 'Beagle',              bob: 0.05, speed: () => random() < 0.25 ? 0 : 0.6 + random() * 1.2 },
   baldman:   { geometry: baldManGeometry,   label: 'Kale man',            bob: 0.03, speed: () => random() < 0.3 ? 0 : 0.8 + random() * 0.6 },
-  dogwalker:   { geometry: dogWalkerGeometry,   label: 'Niet poep oprapende labradoodle uitlater', bob: 0, speed: () => 0 },
+  dogwalker:   { geometry: dogWalkerGeometry,   label: 'Niet poep oprapende labradoodle uitlater', bob: 0.03, speed: () => random() < 0.35 ? 0 : 0.7 + random() * 0.5 },
   labradoodle: { geometry: labradoodleGeometry, label: 'Labradoodle',         bob: 0.08, speed: () => 0 },
   tattooman:   { geometry: tattooManGeometry,   label: 'Getatoeëerde kale man', bob: 0, speed: () => 0 }
 }
@@ -1091,7 +1127,7 @@ function buildWalkers() {
     const heading = random() * Math.PI * 2
     const walker = { kind, x, z, home: [x, z], heading, speed: 0, timer: 0 }
     walkers.push(walker)
-    if (kind === 'dogwalker') walkers.push({ kind: 'labradoodle', owner: walker, x: x + Math.sin(heading) * 1.1, z: z + Math.cos(heading) * 1.1, home: [x, z], heading, speed: 0, timer: 1e9 })
+    if (kind === 'dogwalker') walkers.push(walker.dog = { kind: 'labradoodle', owner: walker, x: x + Math.sin(heading) * 1.1, z: z + Math.cos(heading) * 1.1, home: [x, z], heading, speed: 0, timer: 1e9 })
   })
     ;(world.spots || []).forEach(spot => walkers.push({ kind: spot.kind, x: spot.x, z: spot.z, home: [spot.x, spot.z], heading: spot.heading, speed: 0, timer: 1e9 }))
     Object.entries(KINDS).forEach(([kind, { geometry }]) => {
@@ -1125,6 +1161,14 @@ function updateWalkers(dt, now) {
     if (walker.dead) return combo(walker)
     if (Math.hypot(walker.x - state.x, walker.z - state.z) > 700) return
     const kind = KINDS[walker.kind]
+    if (walker.kind === 'labradoodle' && !walker.owner.dead) {
+      walker.x = walker.owner.x + Math.sin(walker.owner.heading) * 1.1
+      walker.z = walker.owner.z + Math.cos(walker.owner.heading) * 1.1
+      walker.heading = walker.owner.heading
+      placeWalker(walker, walker.owner.speed ? Math.abs(Math.sin(now / 1000 * 12)) * 0.08 : 0)
+      if (!explosion && Math.hypot(walker.x - state.x, walker.z - state.z) < 1.6) runOver(walker.owner)
+      return
+    }
     walker.timer -= dt
     if (walker.kind === 'labradoodle' && walker.owner.dead && walker.timer < 0) {
       walker.panic = (walker.panic || 0) - 1
@@ -1133,8 +1177,9 @@ function updateWalkers(dt, now) {
       walker.timer = 0.8 + random()
     } else if (walker.timer < 0) {
       walker.speed = kind.speed()
+      if (walker.kind === 'dogwalker' && !walker.speed && walker.dog && random() < 0.5 && now - (walker.pooped || 0) > 45000) { walker.pooped = now; dropPoop(walker.dog.x, walker.dog.z) }
       if (walker.speed) {
-        const far = Math.hypot(walker.home[0] - walker.x, walker.home[1] - walker.z) > 40
+        const far = Math.hypot(walker.home[0] - walker.x, walker.home[1] - walker.z) > (walker.kind === 'dogwalker' ? 150 : 40)
         walker.heading = far ? Math.atan2(walker.home[0] - walker.x, walker.home[1] - walker.z) : walker.heading + (random() - 0.5) * 3
       }
       walker.timer = 2 + random() * 4
@@ -1255,6 +1300,30 @@ function bloodTrail() {
     smear.rotation.y = state.heading
     scene.add(smear)
   }
+}
+
+const poops = []
+const poopGeometry = mergeGeometries([
+  new THREE.BoxGeometry(0.16, 0.12, 0.16).translate(0.02, 0.06, 0),
+  new THREE.BoxGeometry(0.11, 0.1, 0.11).translate(-0.02, 0.16, 0.01)
+])
+const poopMaterial = solid(0x4a2e12)
+
+function dropPoop(x, z) {
+  const mesh = new THREE.Mesh(poopGeometry, poopMaterial)
+  mesh.position.set(x, groundHeight(x, z), z)
+    scene.add(mesh)
+    poops.push({ x, z, y: mesh.position.y, born: performance.now(), mesh })
+    if (poops.length > 120) scene.remove(poops.shift().mesh)
+  }
+
+function updatePoops(now) {
+  const nearest = poops.map(poop => ({ poop, distance: Math.hypot(poop.x - state.x, poop.z - state.z) })).sort((a, b) => a.distance - b.distance).slice(0, POOP_SLOTS)
+  poopUniform.value.forEach((slot, i) => {
+    const entry = nearest[i]
+    if (entry) slot.set(entry.poop.x, entry.poop.y, entry.poop.z, Math.min(60, (now - entry.poop.born) / 1000 * 0.7))
+    else slot.set(0, 0, 0, 0)
+  })
 }
 
 function explode(label) {
@@ -1493,7 +1562,7 @@ function travelTo(name) {
 travelList.addEventListener('click', event => { const item = event.target.closest('li'); if (item) travelTo(item.dataset.name) })
 
 const keys = new Set()
-window.debug = { keys, walkers, travelTo, SIGNS, signs, camera, scene, MATERIALS, get state() { return state } }
+window.debug = { keys, walkers, travelTo, dropPoop, poops, SIGNS, signs, camera, scene, MATERIALS, get state() { return state } }
 addEventListener('keydown', event => {
   if (event.code === 'Escape' && !travel.hidden) return toggleTravel(false)
   if (event.code === 'KeyT' && !/INPUT|TEXTAREA/.test(event.target.tagName)) return toggleTravel()
@@ -1583,7 +1652,8 @@ function step(dt, now) {
     streetEl.textContent = streetName(state.x, state.z)
   }
   updateWalkers(dt, now)
-      bloodTrail()
+  updatePoops(now)
+  bloodTrail()
       updateCoins(dt)
       updateTown(dt)
     drawMinimap(dt)
