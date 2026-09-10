@@ -60,11 +60,13 @@ async function phase(name, fn) {
 let world
 await phase('fetch', async () => { world = await fetch(`worlds/${WORLD}.json`, { cache: 'no-store' }).then(response => response.json()) })
 
+const DETAIL = world.buildings.length < 8000
 const COLORS = {
   walls:      [0x9c5a45, 0x6e4636, 0xc9b48a, 0xe8e4da, 0xb8b4ac, 0xa8705a, 0x7a3b2e, 0xd9cdb8, 0x5b4b45, 0xc2a27a, 0xf1ece0, 0x8d6a52].map(hex => new THREE.Color(hex)),
   roofs:      [0x4a3a36, 0x6b3b2f, 0x3e3e44, 0x5a4034, 0x4a4a52, 0x703a30, 0x2f2f33, 0x8a4a3a, 0x555049, 0x3a2e2a, 0x6a5a4a, 0x46403c].map(hex => new THREE.Color(hex)),
   glass:      new THREE.Color(0x26323f),
-  door:       new THREE.Color(0x4a3222),
+  frame:      new THREE.Color(0xf4f2ea),
+  door:       new THREE.Color(0x3b2a1e),
   chimney:    new THREE.Color(0x6b4a3a),
   plaster:    [0xf3efe4, 0xe9e2d0, 0xd8d3c4, 0xf7f4ee, 0xe4d9c4, 0xcfd6cf].map(hex => new THREE.Color(hex)),
   plinth:     new THREE.Color(0x4f4a45),
@@ -227,6 +229,23 @@ function blades(ctx, size, count) {
   }
 }
 
+function bricks(ctx, size, mortar, palette) {
+  ctx.fillStyle = mortar
+  ctx.fillRect(0, 0, size, size)
+  grain(ctx, size, 175, 50, 5000, 3, 0.35)
+  const w = size / 10, h = size / 32
+  for (let row = 0; row < 32; row++) for (let column = -1; column < 10; column++) {
+    const x = column * w + (row % 2) * w / 2 + 1.5, y = row * h + 1.5
+    ctx.fillStyle = palette[Math.floor(random() * palette.length)]
+    ctx.fillRect(x, y, w - 3, h - 3)
+    ctx.fillStyle = `rgba(255,255,255,${0.06 + random() * 0.12})`
+    ctx.fillRect(x, y, w - 3, 2)
+    ctx.fillStyle = `rgba(0,0,0,${0.15 + random() * 0.2})`
+    ctx.fillRect(x, y + h - 5, w - 3, 2)
+    for (let k = 0; k < 6; k++) { ctx.fillStyle = `rgba(0,0,0,${random() * 0.25})`; ctx.fillRect(x + random() * (w - 6), y + random() * (h - 6), 2 + random() * 3, 2) }
+  }
+}
+
 const TEXTURES = {
   grass: texture(6, (ctx, size) => {
     speckle(ctx, size, 195, 50, 500, 48)
@@ -287,43 +306,9 @@ const TEXTURES = {
     }
     grain(ctx, size, 190, 60, 6000, 2, 0.35)
   }),
-  brick: texture(2.4, (ctx, size) => {
-    ctx.fillStyle = grey(205)
-    ctx.fillRect(0, 0, size, size)
-    grain(ctx, size, 200, 50, 4000, 3, 0.5)
-    const w = size / 10, h = size / 32
-    for (let row = 0; row < 32; row++) for (let column = -1; column < 10; column++) {
-      const x = column * w + (row % 2) * w / 2 + 1.5, y = row * h + 1.5, shade = random() < 0.08 ? 110 + random() * 30 : 150 + random() * 60
-      const face = ctx.createLinearGradient(0, y, 0, y + h)
-      face.addColorStop(0, grey(shade + 25))
-      face.addColorStop(1, grey(shade - 15))
-      ctx.fillStyle = face
-      ctx.fillRect(x, y, w - 3, h - 3)
-      ctx.fillStyle = grey(shade - 40, 0.5)
-      ctx.fillRect(x, y + h - 4, w - 3, 1)
-    }
-    grain(ctx, size, 170, 80, 5000, 2, 0.25)
-  }),
-  window: texture(1, (ctx, size) => {
-    const glass = ctx.createLinearGradient(0, 0, size / 2, size)
-    glass.addColorStop(0, '#5d7f9f')
-    glass.addColorStop(0.45, '#324a63')
-    glass.addColorStop(0.5, '#6f90ad')
-    glass.addColorStop(1, '#22303f')
-    ctx.fillStyle = '#f2f0ea'
-    ctx.fillRect(0, 0, size / 2, size)
-    ctx.fillStyle = glass
-    ctx.fillRect(12, 12, size / 2 - 24, size - 24)
-    ctx.fillStyle = '#f2f0ea'
-    ctx.fillRect(size / 4 - 4, 12, 8, size - 24)
-    ctx.fillRect(12, size * 0.4 - 4, size / 2 - 24, 8)
-    ctx.fillStyle = '#4a3222'
-    ctx.fillRect(size / 2, 0, size / 2, size)
-    ctx.fillStyle = '#5c4030'
-    for (let k = 0; k < 2; k++) ctx.fillRect(size / 2 + 24, 24 + k * size * 0.42, size / 2 - 48, size * 0.3)
-    ctx.fillStyle = '#d9c26a'
-    ctx.fillRect(size / 2 + 28, size * 0.5, 14, 14)
-  }, 256),
+  brickRed:    texture(2.4, (ctx, size) => bricks(ctx, size, '#b4aca0', ['#9a4a3a', '#8b3f31', '#a85a46', '#7c3a2f', '#b06a52', '#5a2e26'])),
+  brickBrown:  texture(2.4, (ctx, size) => bricks(ctx, size, '#a49b8e', ['#6e4636', '#5b3a2c', '#7a5040', '#4f3128', '#86604c'])),
+  brickYellow: texture(2.4, (ctx, size) => bricks(ctx, size, '#c9c2b4', ['#c9b48a', '#b8a074', '#d3bf96', '#a88f66', '#dccaa4', '#8f7a58'])),
   tiles: texture(2, (ctx, size) => {
     ctx.fillStyle = grey(120)
     ctx.fillRect(0, 0, size, size)
@@ -349,8 +334,85 @@ const TEXTURES = {
   })
 }
 
+function windowAtlas() {
+  const canvas = document.createElement('canvas')
+  canvas.width = 1024
+  canvas.height = 512
+  const ctx = canvas.getContext('2d'), cell = 512
+  const glass = (x, y, w, h) => {
+    ctx.fillStyle = '#1b2129'
+    ctx.fillRect(x, y, w, h)
+    ctx.fillStyle = 'rgba(232,223,207,0.9)'
+    for (const side of [0, 1]) {
+      const cx = side ? x + w - w * 0.22 : x
+      ctx.fillRect(cx, y, w * 0.22, h)
+      ctx.fillStyle = 'rgba(0,0,0,0.12)'
+      for (let k = 1; k < 5; k++) ctx.fillRect(cx + k * w * 0.22 / 5, y, 3, h)
+      ctx.fillStyle = 'rgba(232,223,207,0.9)'
+    }
+    ctx.fillStyle = 'rgba(255,214,120,0.35)'
+    ctx.fillRect(x + w * 0.3, y + h * 0.35, w * 0.4, h * 0.65)
+    const sky = ctx.createLinearGradient(0, y, 0, y + h)
+    sky.addColorStop(0, 'rgba(170,205,235,0.65)')
+    sky.addColorStop(0.55, 'rgba(90,120,150,0.45)')
+    sky.addColorStop(1, 'rgba(30,45,60,0.35)')
+    ctx.fillStyle = sky
+    ctx.fillRect(x, y, w, h)
+    ctx.fillStyle = 'rgba(255,255,255,0.16)'
+    ctx.beginPath()
+    ctx.moveTo(x + w * 0.1, y + h)
+    ctx.lineTo(x + w * 0.55, y)
+    ctx.lineTo(x + w * 0.75, y)
+    ctx.lineTo(x + w * 0.3, y + h)
+    ctx.fill()
+    const shade = ctx.createLinearGradient(0, y, 0, y + 24)
+    shade.addColorStop(0, 'rgba(0,0,0,0.45)')
+    shade.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.fillStyle = shade
+    ctx.fillRect(x, y, w, 24)
+  }
+  ctx.fillStyle = '#f4f2ea'
+  ctx.fillRect(0, 0, cell, cell)
+  glass(36, 36, cell - 72, cell - 72)
+  ctx.fillStyle = '#f4f2ea'
+  ctx.fillRect(cell / 2 - 9, 36, 18, cell - 72)
+  ctx.fillRect(36, cell * 0.36 - 8, cell - 72, 16)
+  ctx.fillStyle = 'rgba(0,0,0,0.18)'
+  ctx.fillRect(36, 36, cell - 72, 6)
+  ctx.fillRect(36, 36, 6, cell - 72)
+  ctx.fillStyle = '#f4f2ea'
+  ctx.fillRect(cell, 0, cell, cell)
+  ctx.fillStyle = '#3b2a1e'
+  ctx.fillRect(cell + 30, 30, cell - 60, cell - 30)
+  for (let row = 0; row < 2; row++) for (let column = 0; column < 2; column++) {
+    const x = cell + 60 + column * 210, y = 150 + row * 170
+    ctx.fillStyle = '#2a1c12'
+    ctx.fillRect(x, y, 180, 140)
+    ctx.fillStyle = '#4a3626'
+    ctx.fillRect(x + 8, y + 8, 164, 124)
+  }
+  glass(cell + 60, 50, cell - 120, 70)
+  ctx.fillStyle = '#d9c26a'
+  ctx.beginPath()
+  ctx.arc(cell + cell - 70, cell * 0.55, 12, 0, 7)
+  ctx.fill()
+  ctx.fillStyle = '#c9b25a'
+  ctx.fillRect(cell + cell / 2 - 50, cell * 0.62, 100, 14)
+  ctx.fillStyle = '#f4f4f4'
+  ctx.fillRect(cell + 40, 130, 46, 34)
+  ctx.fillStyle = '#222'
+  ctx.font = 'bold 26px system-ui, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.fillText(String(1 + Math.floor(random() * 98)), cell + 63, 157)
+  const map = new THREE.CanvasTexture(canvas)
+  map.colorSpace = THREE.SRGBColorSpace
+  map.anisotropy = renderer.capabilities.getMaxAnisotropy()
+  return map
+}
+TEXTURES.window = windowAtlas()
+
 const textured = map => infectable(new THREE.MeshToonMaterial({ map, vertexColors: true, gradientMap: gradient, side: THREE.DoubleSide }))
-const MATERIALS = { plain: toon, asphalt: textured(TEXTURES.asphalt), paving: textured(TEXTURES.paving), gravel: textured(TEXTURES.gravel), plaster: textured(TEXTURES.plaster), brick: textured(TEXTURES.brick), tiles: textured(TEXTURES.tiles), ground: textured(TEXTURES.grass), window: textured(TEXTURES.window) }
+const MATERIALS = { plain: toon, asphalt: textured(TEXTURES.asphalt), paving: textured(TEXTURES.paving), gravel: textured(TEXTURES.gravel), plaster: textured(TEXTURES.plaster), hedge: textured(TEXTURES.foliage), brickRed: textured(TEXTURES.brickRed), brickBrown: textured(TEXTURES.brickBrown), brickYellow: textured(TEXTURES.brickYellow), tiles: textured(TEXTURES.tiles), ground: textured(TEXTURES.grass), window: textured(TEXTURES.window) }
 MATERIALS.window.map.wrapS = MATERIALS.window.map.wrapT = THREE.ClampToEdgeWrapping
 MATERIALS.window.map.repeat.set(1, 1)
 MATERIALS.window.userData.outlineParameters = { visible: false }
@@ -994,16 +1056,28 @@ function hipRoof(building, groups) {
   const back = ([lx, lz, y]) => [lx * cos - lz * sin, y + top, lx * sin + lz * cos]
   const A = back([minX, minZ, 0]), B = back([maxX, minZ, 0]), C = back([maxX, maxZ, 0]), D = back([minX, maxZ, 0])
   const R1 = back([minX + inset, midZ, rise]), R2 = back([maxX - inset, midZ, rise])
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute([...A, ...B, ...R2, ...A, ...R2, ...R1, ...C, ...D, ...R1, ...C, ...R1, ...R2, ...B, ...C, ...R2, ...D, ...A, ...R1], 3))
-  geometry.computeVertexNormals()
-  groups.tiles.push(paint(geometry, COLORS.roofs[building.c]))
+  const uv = ([lx, lz, y]) => [lx, lz + y * 1.3]
+  const a = [minX, minZ, 0], b = [maxX, minZ, 0], c = [maxX, maxZ, 0], d = [minX, maxZ, 0], r1 = [minX + inset, midZ, rise], r2 = [maxX - inset, midZ, rise]
+  const slopes = new THREE.BufferGeometry()
+  slopes.setAttribute('position', new THREE.Float32BufferAttribute([...A, ...B, ...R2, ...A, ...R2, ...R1, ...C, ...D, ...R1, ...C, ...R1, ...R2], 3))
+  slopes.setAttribute('uv', new THREE.Float32BufferAttribute([a, b, r2, a, r2, r1, c, d, r1, c, r1, r2].flatMap(uv), 2))
+  slopes.computeVertexNormals()
+  groups.tiles.push(paint(slopes, COLORS.roofs[building.c]))
+  const ends = new THREE.BufferGeometry()
+  ends.setAttribute('position', new THREE.Float32BufferAttribute([...B, ...C, ...R2, ...D, ...A, ...R1], 3))
+  ends.setAttribute('uv', new THREE.Float32BufferAttribute([b, c, r2, d, a, r1].flatMap(([lx, lz, y]) => [lz, y]), 2))
+  ends.computeVertexNormals()
+  if (inset) groups.tiles.push(paint(ends, COLORS.roofs[building.c]))
+  else groups[building.group].push(paint(ends, building.wall))
+  const ridge = Math.hypot(R2[0] - R1[0], R2[2] - R1[2])
+  groups.plain.push(paint(new THREE.BoxGeometry(ridge + 0.3, 0.16, 0.34).rotateY(-angle).translate((R1[0] + R2[0]) / 2, top + rise + 0.04, (R1[2] + R2[2]) / 2), COLORS.roofs[building.c].clone().multiplyScalar(0.7)))
+  for (const [P, Q] of [[A, B], [C, D]]) groups.plain.push(paint(new THREE.BoxGeometry(Math.hypot(Q[0] - P[0], Q[2] - P[2]), 0.2, 0.08).rotateY(-angle).translate((P[0] + Q[0]) / 2, top - 0.1, (P[2] + Q[2]) / 2), COLORS.frame))
 
   const [chimneyX, , chimneyZ] = back([minX + inset + (maxX - minX - 2 * inset) * 0.3, midZ, 0])
   groups.plain.push(paint(new THREE.BoxGeometry(0.6, rise + 0.8, 0.6).translate(chimneyX, top + (rise + 0.8) / 2, chimneyZ), COLORS.chimney))
   if (maxX - minX > 9 && rise > 1.8 && Math.abs(Math.floor(minX * 7)) % 2 === 0) {
     const [dx, , dz] = back([(minX + maxX) / 2, minZ + (maxZ - minZ) * 0.24, 0]), dy = top + rise * 0.32
-    groups.plain.push(paint(new THREE.BoxGeometry(1.5, 1.1, 1.3).rotateY(-angle).translate(dx, dy + 0.55, dz), COLORS.walls[building.c]))
+    groups.plain.push(paint(new THREE.BoxGeometry(1.5, 1.1, 1.3).rotateY(-angle).translate(dx, dy + 0.55, dz), COLORS.plaster[0]))
     groups.plain.push(paint(new THREE.BoxGeometry(1.7, 0.12, 1.5).rotateY(-angle).translate(dx, dy + 1.12, dz), COLORS.roofs[building.c]))
     groups.plain.push(paint(new THREE.BoxGeometry(0.9, 0.7, 0.06).rotateY(-angle).translate(dx + 0.67 * sin, dy + 0.55, dz - 0.67 * cos), COLORS.glass))
   }
@@ -1013,49 +1087,78 @@ function hipRoof(building, groups) {
   }
 }
 
-function facadeDetails(building, parts, signParts, plainParts) {
+function facadeDetails(building, groups) {
   const points = building.p
   const acc = { positions: [], normals: [], colors: [], uvs: [] }
   const white = new THREE.Color(0xffffff)
   const floors = Math.max(1, Math.floor((building.h - 2.3) / 3) + 1)
   const front = frontEdge(building)
+  const opening = (cx, cz, ux, uz, nx, nz, width, bottom, height, cell) => {
+    quadInto(acc, cx, cz, ux, uz, nx, nz, width, bottom, height, white, cell)
+    if (!DETAIL) return
+    const rotation = Math.atan2(-uz, ux), ox = cx + nx * 0.07, oz = cz + nz * 0.07
+    const bar = (w, h, along, up, color = COLORS.frame) => groups.plain.push(paint(new THREE.BoxGeometry(w, h, 0.1).rotateY(rotation).translate(ox + ux * along, bottom + up, oz + uz * along), color))
+    bar(width + 0.16, 0.08, 0, height + 0.04)
+    bar(0.08, height + 0.16, -(width / 2 + 0.04), height / 2)
+    bar(0.08, height + 0.16, width / 2 + 0.04, height / 2)
+    if (cell === 0) {
+      bar(width + 0.16, 0.08, 0, -0.04)
+      groups.plain.push(paint(new THREE.BoxGeometry(width + 0.24, 0.07, 0.22).rotateY(rotation).translate(cx + nx * 0.11, bottom - 0.1, cz + nz * 0.11), COLORS.curb))
+    } else {
+      groups.plain.push(paint(new THREE.BoxGeometry(width + 0.5, 0.14, 0.7).rotateY(rotation).translate(cx + nx * 0.35, bottom - 0.07, cz + nz * 0.35), COLORS.curb))
+      groups.plain.push(paint(new THREE.BoxGeometry(width + 0.6, 0.08, 0.7).rotateY(rotation).translate(cx + nx * 0.35, bottom + height + 0.1, cz + nz * 0.35), COLORS.gutter))
+    }
+  }
   points.forEach(([ax, az], i) => {
     const [bx, bz] = points[(i + 1) % points.length]
     const length = Math.hypot(bx - ax, bz - az)
     if (length < 3) return
-
     const ux = (bx - ax) / length, uz = (bz - az) / length
     let nx = uz, nz = -ux
     const mx = (ax + bx) / 2, mz = (az + bz) / 2
     if (inside(points, mx + nx * 0.5, mz + nz * 0.5)) { nx = -nx; nz = -nz }
+    const at = distance => [ax + ux * distance, az + uz * distance]
 
     const brand = building.sign && brandOf(building.sign)
     if (brand && building.h >= 3 && length >= 6) {
       const slots = Math.max(1, Math.floor(length / 10)), step = length / slots
       for (let k = 0; k < slots; k++) {
-        const sign = signQuad(building.sign, ax + ux * step * (k + 0.5), az + uz * step * (k + 0.5), ux, uz, nx, nz, Math.min(8, step - 1), building.base + building.h - 2.5, 2.2)
-        if (sign) signParts.push(sign)
+        const sign = signQuad(building.sign, ...at(step * (k + 0.5)), ux, uz, nx, nz, Math.min(8, step - 1), building.base + building.h - 2.5, 2.2)
+        if (sign) signParts(groups).push(sign)
       }
     } else if (building.sign && building.h >= 3 && length >= 4 && i === front) {
       const sign = signQuad(building.sign, mx, mz, ux, uz, nx, nz, Math.min(length - 0.8, 14), building.base + building.h - 1.9, 1.6)
-      if (sign) signParts.push(sign)
+      if (sign) signParts(groups).push(sign)
     }
 
-    const count = Math.floor((length - 1.2) / 2.6)
-    const spacing = length / (count + 1)
-    for (let k = 1; k <= count; k++) {
-      const cx = ax + ux * spacing * k, cz = az + uz * spacing * k
-      for (let floor = 0; floor < (brand ? 1 : floors); floor++) {
-              if (i === front && floor === 0 && k === 1 && building.h >= 3) quadInto(acc, cx, cz, ux, uz, nx, nz, 1.0, terrainHeight(cx, cz), 2.2 + building.base - terrainHeight(cx, cz), white, 1)
-              else {
-                quadInto(acc, cx, cz, ux, uz, nx, nz, 1.2, building.base + floor * 3 + 1, 1.4, white, 0)
-                plainParts.push(paint(new THREE.BoxGeometry(1.36, 0.08, 0.18).rotateY(Math.atan2(-uz, ux)).translate(cx + nx * 0.1, building.base + floor * 3 + 0.96, cz + nz * 0.1), COLORS.curb))
-              }
-            }
-          }
-        })
-        if (acc.positions.length) parts.push(flush(acc))
+    const count = Math.floor((length - 1.2) / 2.6), spacing = length / (count + 1)
+    const upper = brand ? 1 : floors
+    for (let floor = 1; floor < upper; floor++) for (let k = 1; k <= count; k++) opening(...at(spacing * k), ux, uz, nx, nz, 1.2, building.base + floor * 3 + 1, 1.4, 0)
+    if (i === front && building.h >= 3 && length >= 4.5 && !brand) {
+      const [dx, dz] = at(1.1), ground = terrainHeight(dx, dz)
+      opening(dx, dz, ux, uz, nx, nz, 1.0, ground, 2.2 + building.base - ground, 1)
+      if (DETAIL) for (const along of [0.25, length - 0.25]) groups.plain.push(paint(new THREE.CylinderGeometry(0.05, 0.05, building.h - 0.3, 6).translate(ax + ux * along + nx * 0.12, building.base + building.h / 2 - 0.15, az + uz * along + nz * 0.12), COLORS.gutter))
+      if (DETAIL) {
+        const setback = [4.5, 3.5, 2.5].find(dist => { const hx = mx + nx * dist, hz = mz + nz * dist; return !blocked(hx, hz) && roadDistance(hx, hz) > 2.8 && ['grass', 'ground', 'forest'].includes(kindAt(hx, hz)) })
+        if (setback) {
+          const rotation = Math.atan2(-uz, ux), hy = terrainHeight(mx + nx * setback, mz + nz * setback)
+          const hedge = (from, to) => to - from > 0.6 && groups.hedge.push(paint(new THREE.BoxGeometry(to - from, 0.9, 0.6).rotateY(rotation).translate(ax + ux * (from + to) / 2 + nx * setback, hy + 0.45, az + uz * (from + to) / 2 + nz * setback), new THREE.Color(0x4f8a3a)))
+          hedge(0.2, 0.5)
+          hedge(1.7, length - 0.2)
+          groups.paving.push(paint(new THREE.BoxGeometry(1.0, 0.06, setback).rotateY(rotation).translate(dx + nx * setback / 2, building.base + 0.03, dz + nz * setback / 2), COLORS.sidewalk))
         }
+      }
+      const start = 2.1, end = length - 0.7
+      if (end - start >= 2.7) for (const shift of [-0.68, 0.68]) opening(...at((start + end) / 2 + shift), ux, uz, nx, nz, 1.2, building.base + 0.9, 1.5, 0)
+      else if (end - start >= 1.4) opening(...at((start + end) / 2), ux, uz, nx, nz, 1.2, building.base + 0.9, 1.5, 0)
+    } else {
+      for (let k = 1; k <= count; k++) opening(...at(spacing * k), ux, uz, nx, nz, 1.2, building.base + 1, 1.4, 0)
+    }
+  })
+  if (acc.positions.length) groups.window.push(flush(acc))
+}
+
+const signParts = groups => groups.sign
 
 function frontEdge(building) {
   let best = -1, bestDistance = 60
@@ -1078,9 +1181,11 @@ function buildBuildings(groups) {
     else if (building.roof === 'flat' && building.h <= 8 && Math.abs(seed) % 7 === 0) building.roof = 'hip'
     const bottom = Math.min(...heights) - 0.5
     const shape = new THREE.Shape(building.p.map(([x, z]) => new THREE.Vector2(x, -z)))
-    const plaster = Math.abs(Math.floor(seed / 3)) % 4 === 0
+    building.plaster = Math.abs(Math.floor(seed / 3)) % 4 === 0
+    building.group = building.plaster ? 'plaster' : ['brickRed', 'brickRed', 'brickBrown', 'brickYellow'][Math.abs(Math.floor(seed / 5)) % 4]
+    building.wall = building.plaster ? COLORS.plaster[building.c % COLORS.plaster.length] : new THREE.Color(0xffffff).lerp(COLORS.walls[building.c], 0.2)
     const walls = new THREE.ExtrudeGeometry(shape, { depth: building.base + building.h - bottom, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, bottom, 0)
-    ;(plaster ? groups.plaster : groups.brick).push(paint(walls, plaster ? COLORS.plaster[building.c % COLORS.plaster.length] : COLORS.walls[building.c]))
+    groups[building.group].push(paint(walls, building.wall))
     const plinth = new THREE.Shape(offsetRing(building.p, 0.06).map(([x, z]) => new THREE.Vector2(x, -z)))
     groups.plain.push(paint(new THREE.ExtrudeGeometry(plinth, { depth: building.base - bottom + 0.45, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, bottom, 0), COLORS.plinth))
     gutters(building, groups.plain)
@@ -1089,7 +1194,7 @@ function buildBuildings(groups) {
       const [cx, cz] = centroid(building.p)
       groups.plain.push(paint(new THREE.BoxGeometry(1.4, 0.9, 1.1).translate(cx, building.base + building.h + 0.45, cz), COLORS.concrete))
     }
-    facadeDetails(building, groups.window, groups.sign, groups.plain)
+    facadeDetails(building, groups)
 
   })
 }
@@ -1165,7 +1270,7 @@ function buildGround() {
 }
 
 async function buildWorld() {
-  const groups = { plain: [], asphalt: [], paving: [], gravel: [], brick: [], plaster: [], tiles: [], ground: [], sign: [], window: [] }
+  const groups = { plain: [], asphalt: [], paving: [], gravel: [], brickRed: [], brickBrown: [], brickYellow: [], plaster: [], hedge: [], tiles: [], ground: [], sign: [], window: [] }
   await phase('roads', () => buildRoads(groups))
   await phase('buildings', () => buildBuildings(groups))
   await phase('merge', () => { for (const [name, parts] of Object.entries(groups)) {
