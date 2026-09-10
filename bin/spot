@@ -1,0 +1,35 @@
+#!/usr/bin/env ruby
+require 'json'
+require 'net/http'
+
+world_name, query, kind = ARGV
+abort 'usage: bin/spot WORLD "ADDRESS OR PLACE" KIND' unless kind
+
+world      = JSON.parse(File.read("worlds/#{world_name}.json", encoding: 'UTF-8'))
+lat0, lng0 = world['center']
+
+uri    = URI("https://nominatim.openstreetmap.org/search?q=#{URI.encode_www_form_component(query)}&format=json&limit=1")
+result = JSON.parse(Net::HTTP.get(uri, { 'User-Agent' => 'wijk-racer/0.1' })).first || abort("#{query} not found")
+x = (result['lon'].to_f - lng0) * 111_320 * Math.cos(lat0 * Math::PI / 180)
+z = -(result['lat'].to_f - lat0) * 110_540
+
+best = nil
+world['roads'].select { |road| road['kind'] == 'road' }.each do |road|
+  road['p'].each_cons(2) do |(ax, az), (bx, bz)|
+    abx, abz = bx - ax, bz - az
+    length = abx * abx + abz * abz
+    t = length.zero? ? 0 : (((x - ax) * abx + (z - az) * abz) / length).clamp(0, 1)
+    px, pz = ax + abx * t, az + abz * t
+    distance = Math.hypot(px - x, pz - z)
+    best = { x: px, z: pz, distance: distance, w: road['w'] } if best.nil? || distance < best[:distance]
+  end
+end
+
+toward = Math.atan2(x - best[:x], z - best[:z])
+spot = { 'kind' => kind, 'name' => query,
+         'x' => (best[:x] + Math.sin(toward) * (best[:w] / 2 + 2.5)).round(1),
+         'z' => (best[:z] + Math.cos(toward) * (best[:w] / 2 + 2.5)).round(1),
+         'heading' => (toward + Math::PI).round(3) }
+world['spots'] = (world['spots'] || []).reject { |s| s['name'] == query } << spot
+File.write("worlds/#{world_name}.json", JSON.generate(world))
+warn "#{result['display_name']} -> #{kind} at #{spot['x']},#{spot['z']}"

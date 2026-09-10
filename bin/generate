@@ -48,7 +48,9 @@ query = <<~QL
   (
     way["building"](#{area});
     way["highway"](#{area});
-    node["natural"="tree"](#{area});
+        node["natural"="tree"](#{area});
+        node["shop"]["name"](#{area});
+        node["amenity"]["name"](#{area});
     way["natural"~"^(water|wood|scrub)$"](#{area});
     way["landuse"~"^(grass|forest|farmland|meadow|orchard|allotments)$"](#{area});
     way["leisure"~"^(park|pitch|playground|garden)$"](#{area});
@@ -65,13 +67,17 @@ elements = %w[https://overpass-api.de/api/interpreter https://overpass.kumi.syst
 end
 abort 'Overpass unavailable' unless elements.is_a?(Array)
 
-buildings, roads, areas, trees = [], [], [], []
+buildings, roads, areas, trees, pois = [], [], [], [], []
 
 elements.each do |element|
   tags = element['tags'] || {}
 
   if element['type'] == 'node'
-    trees << project(element, lat0, lng0)
+    if tags['natural'] == 'tree'
+      trees << project(element, lat0, lng0)
+    else
+      pois << [*project(element, lat0, lng0), tags['brand'] || tags['name']]
+    end
     next
   end
 
@@ -86,7 +92,8 @@ elements.each do |element|
     levels = tags['building:levels']&.to_f
     height = tags['height']&.to_f || (levels ? levels * 3 : HEIGHTS.fetch(type, 6))
     buildings << { p: points, h: height.round(1), c: element['id'] % 6,
-                   roof: ROOFED.include?(type) && height <= 9 ? 'hip' : 'flat' }
+                   roof: ROOFED.include?(type) && height <= 9 ? 'hip' : 'flat',
+                   sign: (tags['brand'] || tags['name'])&.slice(0, 24) }.compact
   elsif tags['highway'] && WIDTHS[tags['highway']]
     roads << { p: points, w: WIDTHS[tags['highway']], kind: PATHS.include?(tags['highway']) ? 'path' : 'road',
                name: tags['name'], bridge: (true if tags['bridge'] && tags['bridge'] != 'no') }.compact
@@ -103,6 +110,15 @@ elements.each do |element|
     trees.concat scatter(points, element['id'], 1200) if kind == 'grass'
   end
 end
+
+pois.each do |x, z, name|
+  building = buildings.find do |b|
+    xs, zs = b[:p].transpose
+    x.between?(xs.min, xs.max) && z.between?(zs.min, zs.max) && inside?(b[:p], x, z)
+  end
+  building[:sign] ||= name.slice(0, 24) if building
+end
+warn "#{buildings.count { |b| b[:sign] }} buildings with signs"
 
 start = { x: 0, z: 0, heading: 0 }
 if start_street

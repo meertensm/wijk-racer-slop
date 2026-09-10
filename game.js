@@ -36,7 +36,7 @@ const T = world.terrain
 
 const scene = new THREE.Scene()
 scene.background = COLORS.horizon
-scene.fog = new THREE.Fog(COLORS.horizon, 400, 1600)
+scene.fog = new THREE.Fog(COLORS.horizon, 250, 1300)
 
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.5, 1900)
 const renderer = new THREE.WebGLRenderer({ antialias: true })
@@ -50,9 +50,9 @@ const effect = new OutlineEffect(renderer, { defaultThickness: 0.0022, defaultCo
 scene.add(new THREE.HemisphereLight(0xffffff, 0x8fbf70, 1.0))
 const sun = new THREE.DirectionalLight(0xfff4e0, 1.6)
 sun.castShadow = true
-sun.shadow.mapSize.set(2048, 2048)
-sun.shadow.camera.left = sun.shadow.camera.bottom = -140
-sun.shadow.camera.right = sun.shadow.camera.top = 140
+sun.shadow.mapSize.set(4096, 4096)
+sun.shadow.camera.left = sun.shadow.camera.bottom = -220
+sun.shadow.camera.right = sun.shadow.camera.top = 220
 sun.shadow.camera.near = 1
 sun.shadow.camera.far = 900
 sun.shadow.bias = -0.0006
@@ -125,6 +125,64 @@ const TEXTURES = {
 const textured = map => new THREE.MeshToonMaterial({ map, vertexColors: true, gradientMap: gradient, side: THREE.DoubleSide })
 const MATERIALS = { plain: toon, asphalt: textured(TEXTURES.asphalt), paving: textured(TEXTURES.paving), brick: textured(TEXTURES.brick), tiles: textured(TEXTURES.tiles), ground: textured(TEXTURES.grass) }
 
+const UPPER = ['hornbach', 'jumbo', 'aldi', 'lidl', 'hema', 'gamma', 'praxis', 'karwei', 'action', 'ikea', 'kfc', 'bp', 'plus', 'spar', 'coop', 'expert', 'wibra', 'intertoys', 'decathlon', 'primark', 'kwantum', 'shell', 'ing']
+const BRANDS = [['hornbach', '#f58220'], ['jumbo', '#f9c400', '#000'], ['albert heijn', '#00a0e2'], ['action', '#0c4da2'], ['kruidvat', '#e30613'],
+  ['lidl', '#0050aa'], ['aldi', '#001e5a'], ['hema', '#e2001a'], ['praxis', '#f07f00'], ['gamma', '#0072bc'], ['karwei', '#e2001a'],
+  ['mcdonald', '#da291c'], ['kfc', '#a4141e'], ['shell', '#dd1d21'], ['bp', '#009639'], ['total', '#e2001a'], ['blokker', '#0093d0'],
+  ['zeeman', '#ffd500', '#000'], ['primark', '#00a0e0'], ['plus', '#009b3a'], ['coop', '#f39200'], ['spar', '#009a44'], ['etos', '#009fe3'],
+  ['bruna', '#e2001a'], ['mediamarkt', '#df0000'], ['media markt', '#df0000'], ['ikea', '#0058a3'], ['decathlon', '#0082c3'],
+  ['burger king', '#d62300'], ['domino', '#006491'], ['subway', '#009b48'], ['rabobank', '#ff6600'], ['ing', '#ff6200'], ['abn', '#009286'],
+  ['kwantum', '#e2001a'], ['leen bakker', '#e30613'], ['expert', '#f39200'], ['intertoys', '#e2001a'], ['big bazar', '#e30613'], ['wibra', '#d50032']]
+const SIGN = { width: 1024, height: 128, columns: 4 }
+const brandOf = sign => BRANDS.find(([name]) => sign.toLowerCase().includes(name))
+
+function signAtlas(signs) {
+  const rows = Math.max(1, Math.ceil(signs.length / SIGN.columns))
+  const canvas = document.createElement('canvas')
+  canvas.width = SIGN.width * SIGN.columns
+  canvas.height = SIGN.height * rows
+  const ctx = canvas.getContext('2d')
+  signs.forEach((sign, i) => {
+    const x = (i % SIGN.columns) * SIGN.width, y = Math.floor(i / SIGN.columns) * SIGN.height
+    const brand = brandOf(sign)
+    const text = brand && UPPER.includes(brand[0]) ? sign.toUpperCase() : sign
+    ctx.fillStyle = brand ? brand[1] : '#1f3a5f'
+    ctx.fillRect(x, y, SIGN.width, SIGN.height)
+    ctx.fillStyle = brand && brand[2] ? brand[2] : '#fff'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    let size = 96
+    ctx.font = `900 ${size}px system-ui, sans-serif`
+    while (ctx.measureText(text).width > SIGN.width - 60 && size > 24) ctx.font = `900 ${size -= 4}px system-ui, sans-serif`
+    ctx.fillText(text, x + SIGN.width / 2, y + SIGN.height / 2 + 4)
+  })
+  const map = new THREE.CanvasTexture(canvas)
+  map.colorSpace = THREE.SRGBColorSpace
+  map.anisotropy = renderer.capabilities.getMaxAnisotropy()
+  return { map, rows }
+}
+
+const SIGNS = [...new Set(world.buildings.map(building => building.sign).filter(Boolean))].sort((a, b) => (brandOf(b) ? 1 : 0) - (brandOf(a) ? 1 : 0)).slice(0, 256)
+const signs = signAtlas(SIGNS)
+MATERIALS.sign = new THREE.MeshToonMaterial({ map: signs.map, gradientMap: gradient, side: THREE.DoubleSide })
+
+function signQuad(sign, cx, cz, ux, uz, nx, nz, width, bottom, height) {
+  const index = SIGNS.indexOf(sign)
+  if (index < 0) return null
+  const column = index % SIGN.columns, row = Math.floor(index / SIGN.columns)
+  let u0 = column / SIGN.columns, u1 = (column + 1) / SIGN.columns
+  if (ux * nz - uz * nx < 0) [u0, u1] = [u1, u0]
+  const v1 = 1 - row / signs.rows, v0 = 1 - (row + 1) / signs.rows
+  const ox = nx * 0.1, oz = nz * 0.1, half = width / 2
+  const x0 = cx - ux * half + ox, z0 = cz - uz * half + oz, x1 = cx + ux * half + ox, z1 = cz + uz * half + oz
+  const top = bottom + height
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([x0, bottom, z0, x1, bottom, z1, x1, top, z1, x0, bottom, z0, x1, top, z1, x0, top, z0], 3))
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute([u0, v0, u1, v0, u1, v1, u0, v0, u1, v1, u0, v1], 2))
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(Array(6).fill([nx, 0, nz]).flat(), 3))
+  return geometry
+}
+
 function uvWorld(geometry) {
   const position = geometry.attributes.position
   const uvs = new Float32Array(position.count * 2)
@@ -183,7 +241,43 @@ function digWater() {
   })
 }
 
+function stampRoads() {
+  const sum = new Float32Array(T.heights.length), weight = new Float32Array(T.heights.length)
+  world.roads.filter(road => road.kind === 'road' && !road.bridge).forEach(road => {
+    const curve = new THREE.CatmullRomCurve3(road.p.map(([x, z]) => new THREE.Vector3(x, 0, z)), false, 'centripetal')
+    const points = curve.getSpacedPoints(Math.max(2, Math.ceil(curve.getLength() / 10)))
+    const heights = points.map(({ x, z }) => terrainHeight(x, z))
+    const reach = road.w / 2 + 6
+    points.forEach(({ x, z }, i) => {
+      let total = 0, count = 0
+      for (let k = -3; k <= 3; k++) if (heights[i + k] !== undefined) { total += heights[i + k]; count++ }
+      const level = total / count
+      if (Math.abs(level - heights[i]) > 2.5) return
+      const c0 = clamp(Math.floor((x - reach - T.x0) / T.sx), 0, T.cols - 1), c1 = clamp(Math.ceil((x + reach - T.x0) / T.sx), 0, T.cols - 1)
+      const r0 = clamp(Math.floor((z - reach - T.z0) / T.sz), 0, T.rows - 1), r1 = clamp(Math.ceil((z + reach - T.z0) / T.sz), 0, T.rows - 1)
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+        const distance = Math.hypot(T.x0 + c * T.sx - x, T.z0 + r * T.sz - z)
+        if (distance > reach) continue
+        const w = distance < road.w / 2 + 1 ? 1 : 1 - (distance - road.w / 2 - 1) / 5
+        sum[r * T.cols + c] += level * w
+        weight[r * T.cols + c] += w
+      }
+    })
+  })
+  T.heights = T.heights.map((h, i) => weight[i] ? h + (sum[i] / weight[i] - h) * Math.min(1, weight[i]) : h)
+}
+
+function markDualCarriageways() {
+  const wide = world.roads.filter(road => road.kind === 'road' && road.w >= 7 && road.name)
+  wide.forEach(road => {
+    const [mx, mz] = road.p[Math.floor(road.p.length / 2)]
+    road.dual = wide.some(other => other !== road && other.name === road.name && !other.p.some(p => road.p.some(q => p[0] === q[0] && p[1] === q[1])) && polylineDistance(mx, mz, other.p) < 16)
+    if (road.dual) road.w = 5.5
+  })
+}
+
 function prepareRoads() {
+  markDualCarriageways()
   const key = ([x, z]) => `${x},${z}`
   const bigWater = world.roads.filter(road => road.level !== undefined)
 
@@ -217,7 +311,9 @@ function prepareRoads() {
     const curve = new THREE.CatmullRomCurve3(road.p.map(([x, z], i) => new THREE.Vector3(x, road.hs[i], z)), false, 'centripetal')
     road.samples = curve.getSpacedPoints(Math.max(1, Math.ceil(curve.getLength() / 4))).map(({ x, y, z }) => {
       const ground = terrainHeight(x, z)
-      return lifted(y, ground) ? [x, z, y, true] : [x, z, ground, false]
+      if (road.kind === 'water' || road.bridge) return [x, z, y, true]
+      const level = Math.max(y, ground)
+      return lifted(level, ground) ? [x, z, level, true] : [x, z, ground, false]
     })
   })
 }
@@ -352,9 +448,10 @@ function buildRoads(groups) {
           groups.plain.push(paint(skirt(inner, inner.map(([x, y, z]) => [x, y - 0.14, z])), COLORS.curb))
         }
       }
-      if (road.w >= 7) {
-        dashes(points, groups.plain)
-        for (const side of [-1, 1]) band(points, side * (road.w / 2 - 0.35), 0.12, 0.2, COLORS.dash, groups.plain)
+      if (road.w >= 7 || road.dual) {
+        const marks = trim(points, clearance(road, road.p[0]) + 2, clearance(road, road.p[road.p.length - 1]) + 2)
+        if (!road.dual) dashes(marks, groups.plain)
+        for (const side of [-1, 1]) band(marks, side * (road.w / 2 - 0.35), 0.12, 0.2, COLORS.dash, groups.plain)
       }
       if (road.bridge) bridge(points, road.w, groups.plain)
       else if (road.elevated) embankment(points, road.w, groups.ground)
@@ -426,7 +523,22 @@ function hipRoof(building, groups) {
   groups.plain.push(paint(new THREE.BoxGeometry(0.6, rise + 0.8, 0.6).translate(chimneyX, top + (rise + 0.8) / 2, chimneyZ), COLORS.chimney))
 }
 
-function facadeDetails(building, parts) {
+function roofSign(building, signParts) {
+  const points = building.p
+  let angle = 0, longest = 0
+  points.forEach(([x, z], i) => {
+    const [nx, nz] = points[(i + 1) % points.length]
+    const length = Math.hypot(nx - x, nz - z)
+    if (length > longest) { longest = length; angle = Math.atan2(nz - z, nx - x) }
+  })
+  if (longest < 14) return
+  const cx = points.reduce((sum, p) => sum + p[0], 0) / points.length, cz = points.reduce((sum, p) => sum + p[1], 0) / points.length
+  const ux = Math.cos(angle), uz = Math.sin(angle), nx = uz, nz = -ux
+  const sign = signQuad(building.sign, cx, cz, ux, uz, nx, nz, Math.min(longest * 0.7, 24), building.base + building.h + 0.6, 3)
+  if (sign) signParts.push(sign)
+}
+
+function facadeDetails(building, parts, signParts) {
   const points = building.p
   const floors = Math.max(1, Math.floor((building.h - 2.3) / 3) + 1)
   const front = frontEdge(building)
@@ -439,6 +551,13 @@ function facadeDetails(building, parts) {
     let nx = uz, nz = -ux
     const mx = (ax + bx) / 2, mz = (az + bz) / 2
     if (inside(points, mx + nx * 0.5, mz + nz * 0.5)) { nx = -nx; nz = -nz }
+
+    const brand = building.sign && brandOf(building.sign)
+    if (building.sign && building.h >= 3 && length >= 4 && (i === front || (brand && length >= 10 && roadDistance(mx, mz) < 40))) {
+      const height = brand || building.h >= 6 ? 2.6 : 1.6
+      const sign = signQuad(building.sign, mx, mz, ux, uz, nx, nz, Math.min(length - 0.8, brand ? 24 : 14), building.base + building.h - height - 0.3, height)
+      if (sign) signParts.push(sign)
+    }
 
     const count = Math.floor((length - 1.2) / 2.6)
     const spacing = length / (count + 1)
@@ -470,17 +589,13 @@ function buildBuildings(groups) {
     const shape = new THREE.Shape(building.p.map(([x, z]) => new THREE.Vector2(x, -z)))
     groups.brick.push(paint(new THREE.ExtrudeGeometry(shape, { depth: building.base + building.h - bottom, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, bottom, 0), COLORS.walls[building.c]))
     if (building.roof === 'hip') hipRoof(building, groups)
-    facadeDetails(building, groups.plain)
+    facadeDetails(building, groups.plain, groups.sign)
+    if (building.sign && brandOf(building.sign) && building.roof === 'flat') roofSign(building, groups.sign)
   })
 }
 
 function buildGround() {
   const [minX, minZ, maxX, maxZ] = world.bounds
-  const resolution = Math.max(8, (maxX - minX) / 450)
-  const cols = Math.ceil((maxX - minX) / resolution), rows = Math.ceil((maxZ - minZ) / resolution)
-  const geometry = new THREE.PlaneGeometry(maxX - minX, maxZ - minZ, cols, rows).rotateX(-Math.PI / 2).translate((minX + maxX) / 2, 0, (minZ + maxZ) / 2)
-  const position = geometry.attributes.position
-  const colors = new Float32Array(position.count * 3)
   const areaGrid = new Map()
   world.areas.forEach((area, i) => {
     const xs = area.p.map(p => p[0]), zs = area.p.map(p => p[1])
@@ -491,23 +606,30 @@ function buildGround() {
         areaGrid.get(key).push(i)
       }
   })
-  for (let i = 0; i < position.count; i++) {
-    const x = position.getX(i), z = position.getZ(i)
-    position.setY(i, terrainHeight(x, z))
-    let color = COLORS.ground
-    for (const index of areaGrid.get(cellKey(x, z)) || []) if (inside(world.areas[index].p, x, z)) color = COLORS[world.areas[index].kind]
-    colors.set([color.r, color.g, color.b], i * 3)
+  const segments = Math.round(TILE / Math.min(T.sx, T.sz, 10))
+  for (let tx = minX; tx < maxX; tx += TILE) for (let tz = minZ; tz < maxZ; tz += TILE) {
+    const width = Math.min(TILE, maxX - tx), depth = Math.min(TILE, maxZ - tz)
+    const geometry = new THREE.PlaneGeometry(width, depth, segments, segments).rotateX(-Math.PI / 2).translate(tx + width / 2, 0, tz + depth / 2)
+    const position = geometry.attributes.position
+    const colors = new Float32Array(position.count * 3)
+    for (let i = 0; i < position.count; i++) {
+      const x = position.getX(i), z = position.getZ(i)
+      position.setY(i, terrainHeight(x, z))
+      let color = COLORS.ground
+      for (const index of areaGrid.get(cellKey(x, z)) || []) if (inside(world.areas[index].p, x, z)) color = COLORS[world.areas[index].kind]
+      colors.set([color.r, color.g, color.b], i * 3)
+    }
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    uvWorld(geometry)
+    geometry.computeVertexNormals()
+    const ground = new THREE.Mesh(geometry, MATERIALS.ground)
+    ground.receiveShadow = true
+    scene.add(ground)
   }
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-  uvWorld(geometry)
-  geometry.computeVertexNormals()
-  const ground = new THREE.Mesh(geometry, MATERIALS.ground)
-  ground.receiveShadow = true
-  scene.add(ground)
 }
 
 function buildWorld() {
-  const groups = { plain: [], asphalt: [], paving: [], brick: [], tiles: [], ground: [] }
+  const groups = { plain: [], asphalt: [], paving: [], brick: [], tiles: [], ground: [], sign: [] }
   buildRoads(groups)
   buildBuildings(groups)
   for (const [name, parts] of Object.entries(groups)) {
@@ -686,10 +808,31 @@ function baldManGeometry() {
   return merged(parts)
 }
 
+function tattooManGeometry() {
+  const parts = []
+  man(parts, false, 0xf4f4f4)
+  const ink = 0x35566e
+  for (const side of [-1, 1]) {
+    box(parts, 0.13, 0.5, 0.15, ink, side * 0.27, 1.07, 0)
+    box(parts, 0.11, 0.06, 0.13, ink, side * 0.27, 0.85, 0)
+  }
+  box(parts, 0.16, 0.1, 0.25, ink, 0, 1.44, 0)
+  box(parts, 0.42, 0.08, 0.25, ink, 0, 1.38, 0)
+  return merged(parts)
+}
+
 function dogWalkerGeometry() {
   const parts = []
   man(parts, true, 0x9a4a3a)
-  const dz = 1.1, fur = 0xc9a67a
+  const hand = new THREE.Vector3(0.27, 0.72, 0), collar = new THREE.Vector3(0, 0.62, 1.4)
+  const leash = new THREE.BoxGeometry(0.02, 0.02, hand.distanceTo(collar)).lookAt(collar.clone().sub(hand)).translate(...hand.clone().add(collar).multiplyScalar(0.5).toArray())
+  parts.push(paint(leash, new THREE.Color(0x222222)))
+  return merged(parts)
+}
+
+function labradoodleGeometry() {
+  const parts = []
+  const dz = 0, fur = 0xc9a67a
   box(parts, 0.3, 0.32, 0.6, fur, 0, 0.42, dz, 0.35)
   box(parts, 0.22, 0.22, 0.24, fur, 0, 0.62, dz + 0.4)
   for (const side of [-1, 1]) {
@@ -701,24 +844,25 @@ function dogWalkerGeometry() {
   box(parts, 0.05, 0.05, 0.25, fur, 0, 0.5, dz - 0.4, -0.6)
   box(parts, 0.09, 0.07, 0.09, 0x4a2e12, 0.02, 0.035, dz - 0.42)
   box(parts, 0.07, 0.06, 0.07, 0x4a2e12, -0.02, 0.09, dz - 0.42)
-  const hand = new THREE.Vector3(0.27, 0.72, 0), collar = new THREE.Vector3(0, 0.62, dz + 0.3)
-  const leash = new THREE.BoxGeometry(0.02, 0.02, hand.distanceTo(collar)).lookAt(collar.clone().sub(hand)).translate(...hand.clone().add(collar).multiplyScalar(0.5).toArray())
-  parts.push(paint(leash, new THREE.Color(0x222222)))
   return merged(parts)
 }
 
 const KINDS = {
   beagle:    { geometry: beagleGeometry,    label: 'Beagle',              bob: 0.05, speed: () => random() < 0.25 ? 0 : 0.6 + random() * 1.2 },
   baldman:   { geometry: baldManGeometry,   label: 'Kale man',            bob: 0.03, speed: () => random() < 0.3 ? 0 : 0.8 + random() * 0.6 },
-  dogwalker: { geometry: dogWalkerGeometry, label: 'Man met labradoodle', bob: 0,    speed: () => 0 }
+  dogwalker:   { geometry: dogWalkerGeometry,   label: 'Gerard',              bob: 0, speed: () => 0 },
+  labradoodle: { geometry: labradoodleGeometry, label: 'Labradoodle',         bob: 0.08, speed: () => 0 },
+  tattooman:   { geometry: tattooManGeometry,   label: 'Getatoeëerde kale man', bob: 0, speed: () => 0 }
 }
 
+const walkerMeshes = {}
+const dummy = new THREE.Object3D()
+
 function buildWalkers() {
-  const geometries = Object.fromEntries(Object.entries(KINDS).map(([kind, { geometry }]) => [kind, geometry()]))
   const spots = []
   world.roads.filter(road => road.kind === 'road' && road.w >= 5 && road.w <= 8).forEach(road => {
     const points = road.samples
-    for (let i = 10; i < points.length; i += 24) {
+    for (let i = 4; i < points.length; i += 8) {
       const [x, z] = points[i], [px, pz] = points[i - 1]
       const length = Math.hypot(x - px, z - pz) || 1
       const side = random() < 0.5 ? -1 : 1, offset = road.w / 2 + 2.5
@@ -727,26 +871,58 @@ function buildWalkers() {
   })
   const zones = world.zones || []
   const zoneOf = ([x, z]) => zones.find(zone => inside(zone.p, x, z))
-  const candidates = spots.sort(() => random() - 0.5).filter(([x, z]) => Math.hypot(x - world.start.x, z - world.start.z) > 40 && !blocked(x, z))
-  const nearby = ([x, z]) => Math.hypot(x - world.start.x, z - world.start.z) < 350
-  const chosen = [...candidates.filter(nearby).slice(0, 60), ...candidates.filter(spot => !nearby(spot)).slice(0, 60)]
-  zones.forEach(zone => chosen.push(...candidates.filter(spot => zoneOf(spot) === zone).slice(0, 40)))
-  new Set(chosen).forEach(([x, z]) => {
+  const fromStart = ([x, z]) => Math.hypot(x - world.start.x, z - world.start.z)
+  const candidates = spots.sort(() => random() - 0.5).filter(spot => fromStart(spot) > 30 && !blocked(...spot))
+  const chosen = new Set([...candidates.filter(spot => fromStart(spot) < 600).slice(0, 400), ...candidates.filter(spot => fromStart(spot) >= 600).slice(0, 600)])
+  zones.forEach(zone => candidates.filter(spot => zoneOf(spot) === zone).slice(0, 150).forEach(spot => chosen.add(spot)))
+
+  chosen.forEach(([x, z]) => {
     const zone = zoneOf([x, z])
     const kind = zone ? zone.kind : random() < 0.17 ? 'dogwalker' : 'beagle'
-    const mesh = new THREE.Mesh(geometries[kind], toon)
-    mesh.castShadow = true
-    scene.add(mesh)
-    walkers.push({ kind, mesh, x, z, home: [x, z], heading: random() * Math.PI * 2, speed: 0, timer: 0 })
+    const heading = random() * Math.PI * 2
+    const walker = { kind, x, z, home: [x, z], heading, speed: 0, timer: 0 }
+    walkers.push(walker)
+    if (kind === 'dogwalker') walkers.push({ kind: 'labradoodle', owner: walker, x: x + Math.sin(heading) * 1.1, z: z + Math.cos(heading) * 1.1, home: [x, z], heading, speed: 0, timer: 1e9 })
   })
+    ;(world.spots || []).forEach(spot => walkers.push({ kind: spot.kind, x: spot.x, z: spot.z, home: [spot.x, spot.z], heading: spot.heading, speed: 0, timer: 1e9 }))
+    Object.entries(KINDS).forEach(([kind, { geometry }]) => {
+      const group = walkers.filter(walker => walker.kind === kind)
+    if (!group.length) return
+    const mesh = new THREE.InstancedMesh(geometry(), toon, group.length)
+    mesh.castShadow = true
+    mesh.frustumCulled = false
+    scene.add(mesh)
+    walkerMeshes[kind] = mesh
+    group.forEach((walker, index) => { walker.index = index; placeWalker(walker, 0) })
+  })
+}
+
+function placeWalker(walker, bob) {
+  dummy.position.set(walker.x, terrainHeight(walker.x, walker.z) + bob, walker.z)
+  dummy.rotation.set(0, walker.heading, 0)
+  dummy.scale.set(1, 1, 1)
+  if (walker.dead) {
+    dummy.position.y += 0.15
+    dummy.rotation.set(Math.PI / 2, walker.heading, 0)
+    dummy.scale.y = 0.4
+  }
+  dummy.updateMatrix()
+  walkerMeshes[walker.kind].setMatrixAt(walker.index, dummy.matrix)
+  walkerMeshes[walker.kind].instanceMatrix.needsUpdate = true
 }
 
 function updateWalkers(dt, now) {
   walkers.forEach(walker => {
-    if (walker.dead) return
+    if (walker.dead) return combo(walker)
+    if (Math.hypot(walker.x - state.x, walker.z - state.z) > 700) return
     const kind = KINDS[walker.kind]
     walker.timer -= dt
-    if (walker.timer < 0) {
+    if (walker.kind === 'labradoodle' && walker.owner.dead && walker.timer < 0) {
+      walker.panic = (walker.panic || 0) - 1
+      walker.speed = walker.panic > 0 ? 4.5 : 1.2 + random()
+      walker.heading = walker.panic > 0 ? Math.atan2(walker.x - state.x, walker.z - state.z) + (random() - 0.5) : walker.heading + (random() - 0.5) * 3
+      walker.timer = 0.8 + random()
+    } else if (walker.timer < 0) {
       walker.speed = kind.speed()
       if (walker.speed) {
         const far = Math.hypot(walker.home[0] - walker.x, walker.home[1] - walker.z) > 40
@@ -761,28 +937,93 @@ function updateWalkers(dt, now) {
       walker.x = clamp(x, minX, maxX)
       walker.z = clamp(z, minZ, maxZ)
     }
-    walker.mesh.position.set(walker.x, groundHeight(walker.x, walker.z) + (walker.speed ? Math.abs(Math.sin(now / 1000 * 12)) * kind.bob : 0), walker.z)
-    walker.mesh.rotation.y = walker.heading
-    const hits = [[walker.x, walker.z]]
-    if (walker.kind === 'dogwalker') hits.push([walker.x + Math.sin(walker.heading) * 1.1, walker.z + Math.cos(walker.heading) * 1.1])
-    if (!explosion && hits.some(([hx, hz]) => Math.hypot(hx - state.x, hz - state.z) < 1.6)) walker.kind === 'dogwalker' ? runOver(walker) : explode(kind.label)
+    placeWalker(walker, walker.speed ? Math.abs(Math.sin(now / 1000 * 12)) * kind.bob : 0)
+    if (explosion || Math.hypot(walker.x - state.x, walker.z - state.z) >= 1.6) return
+    if (walker.kind === 'dogwalker') runOver(walker)
+    else if (walker.kind === 'labradoodle') { if (!walker.owner.dead) runOver(walker.owner) }
+    else explode(kind.label)
   })
 }
-
 const blood = new THREE.MeshBasicMaterial({ color: 0x7a0c0c, transparent: true, opacity: 0.9 })
 blood.userData.outlineParameters = { visible: false }
 
 function runOver(walker) {
   walker.dead = true
-  walker.mesh.rotation.set(Math.PI / 2, walker.heading, 0)
-  walker.mesh.scale.y = 0.4
-  walker.mesh.position.y = groundHeight(walker.x, walker.z) + 0.15
+  walker.deadAt = performance.now()
+  walker.stage = 0
+  walker.onTop = true
+  placeWalker(walker, 0)
   const splat = new THREE.Mesh(new THREE.CircleGeometry(1.4, 12).rotateX(-Math.PI / 2), blood)
   splat.position.set(walker.x, groundHeight(walker.x, walker.z) + 0.21, walker.z)
   scene.add(splat)
+    const dog = walkers.find(other => other.owner === walker)
+    if (dog) { dog.panic = 6; dog.timer = 0 }
+    state.blood = 45
+    state.bloodAt = [state.x, state.z]
+  streetEl.textContent = 'Gerard overreden: +1 G-punt'
+  awardCoin(walker.x, walker.z)
+}
+
+const coinsEl = document.getElementById('coins')
+const coinMaterial = new THREE.MeshToonMaterial({ color: 0xffc233, gradientMap: gradient })
+const coinGeometry = new THREE.CylinderGeometry(0.45, 0.45, 0.08, 16).rotateX(Math.PI / 2)
+const coins = []
+let gpunten = Number(localStorage.getItem('gpunten') || 0)
+coinsEl.querySelector('span').textContent = gpunten.toLocaleString('nl-NL')
+
+function awardCoin(x, z, amount = 1) {
+  gpunten += amount
+  localStorage.setItem('gpunten', gpunten)
+    coinsEl.querySelector('span').textContent = gpunten.toLocaleString('nl-NL')
+  coinsEl.classList.remove('bump')
+  requestAnimationFrame(() => coinsEl.classList.add('bump'))
+  const coin = new THREE.Mesh(coinGeometry, coinMaterial)
+  coin.position.set(x, groundHeight(x, z) + 1, z)
+  scene.add(coin)
+  coins.push({ coin, born: performance.now() })
+}
+
+function updateCoins(dt) {
+  coins.forEach(({ coin, born }, i) => {
+    const age = (performance.now() - born) / 1000
+    coin.position.y += dt * 1.5
+    coin.rotation.y += dt * 6
+    if (age > 1.5) { scene.remove(coin); coins.splice(i, 1) }
+  })
+}
+
+const townSign = document.getElementById('townsign')
+let currentTown = null, townTimer = 0
+
+function updateTown(dt) {
+  townTimer -= dt
+  if (townTimer > 0 || !world.towns) return
+  townTimer = 0.5
+  const town = world.towns.reduce((best, town) => {
+    const score = Math.hypot(town.x - state.x, town.z - state.z) / (town.town ? 3 : 1)
+    return score < best.score ? { town, score } : best
+  }, { town: null, score: 900 }).town
+  if (!town || town.name === currentTown) return
+  currentTown = town.name
+  townSign.textContent = town.name
+  townSign.classList.remove('show')
+  requestAnimationFrame(() => townSign.classList.add('show'))
+}
+
+function combo(walker) {
+  if (walker.kind !== 'dogwalker' || walker.stage >= 2) return
+  const near = Math.hypot(walker.x - state.x, walker.z - state.z) < 1.8
+  if (!near) { walker.onTop = false; return }
+  if (walker.onTop || performance.now() - walker.deadAt > 5000) return
+  const wanted = walker.stage === 0 ? state.speed < -0.5 : state.speed > 0.5
+  if (!wanted) return
+  walker.onTop = true
+  walker.stage++
+  walker.deadAt = performance.now()
   state.blood = 45
   state.bloodAt = [state.x, state.z]
-  streetEl.textContent = 'Man met labradoodle overreden'
+  streetEl.textContent = walker.stage === 1 ? 'Achteruit over Gerard: +½ G-punt' : 'En nog eens vooruit: +½ G-punt'
+  awardCoin(walker.x, walker.z, 0.5)
 }
 
 function bloodTrail() {
@@ -898,6 +1139,8 @@ function groundHeight(x, z) {
   return terrainHeight(x, z)
 }
 
+const roadDistance = (x, z) => nearestSegment(x, z).distance
+
 function streetName(x, z) {
   const { segment, distance } = nearestSegment(x, z)
   return distance < 25 && segment.road.name || ''
@@ -907,15 +1150,18 @@ function streetName(x, z) {
 
 const minimap = document.getElementById('minimap')
 const map = minimap.getContext('2d')
-const MAP_RADIUS = 220
+const MAP_RADIUS = 300
+let mapHeading = 0
 
-function drawMinimap() {
+function drawMinimap(dt) {
+  const turn = Math.atan2(Math.sin(state.heading - mapHeading), Math.cos(state.heading - mapHeading))
+  mapHeading += turn * Math.min(1, dt * 3)
   const size = minimap.width, scale = size / 2 / MAP_RADIUS
   map.clearRect(0, 0, size, size)
   map.save()
   map.translate(size / 2, size / 2)
-  map.rotate(-(state.heading + Math.PI))
-  map.scale(scale, scale)
+  map.rotate(-(mapHeading + Math.PI))
+    map.scale(scale, scale)
   map.translate(-state.x, -state.z)
   map.lineCap = map.lineJoin = 'round'
 
@@ -943,7 +1189,13 @@ function drawMinimap() {
       map.fill()
     }
   }
-  walkers.forEach(walker => { map.fillStyle = walker.kind === 'beagle' ? '#8b5a2b' : '#2b5a8b'; map.fillRect(walker.x - 2.5, walker.z - 2.5, 5, 5) })
+  walkers.forEach(walker => {
+    if (walker.dead || Math.abs(walker.x - state.x) > MAP_RADIUS || Math.abs(walker.z - state.z) > MAP_RADIUS) return
+    map.fillStyle = walker.kind === 'beagle' ? '#ff9f1a' : walker.kind === 'labradoodle' ? '#ffe28a' : walker.kind === 'baldman' ? '#ff4fd8' : '#4fd2ff'
+    map.beginPath()
+    map.arc(walker.x, walker.z, 4, 0, Math.PI * 2)
+    map.fill()
+  })
   map.restore()
 
   map.save()
@@ -955,8 +1207,8 @@ function drawMinimap() {
   map.lineTo(-8, 10)
   map.closePath()
   map.fill()
-  map.rotate(-(state.heading + Math.PI))
-  map.fillStyle = '#fff'
+  map.rotate(-(mapHeading + Math.PI))
+    map.fillStyle = '#fff'
   map.font = 'bold 22px system-ui'
   map.textAlign = 'center'
   map.fillText('N', 0, -size / 2 + 34)
@@ -971,15 +1223,66 @@ index(world.buildings, building => {
 })
 smoothTerrain()
 digWater()
+stampRoads()
 prepareRoads()
 indexRoads()
 buildWorld()
 const car = buildCar()
 buildWalkers()
 
+// FAST TRAVEL:
+
+const travel = document.getElementById('travel')
+const travelList = document.getElementById('travel-list')
+
+function renderTravel() {
+  const towns = new Map()
+  ;(world.places || []).forEach(place => {
+    const town = place.town || 'Overig'
+    if (!towns.has(town)) towns.set(town, [])
+    towns.get(town).push(place)
+  })
+  travelList.innerHTML = [...towns.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([town, places]) =>
+    `<li class="town">${town}</li>` + places.map(place =>
+      `<li data-name="${place.name.replace(/"/g, '&quot;')}"><span>${place.name}</span><small>${place.kind.replace(/_/g, ' ')}</small></li>`).join('')
+  ).join('')
+}
+
+function toggleTravel(open = travel.hidden) {
+  travel.hidden = !open
+  keys.clear()
+  if (open) renderTravel()
+}
+
+function travelTo(name) {
+  const place = (world.places || []).find(place => place.name === name)
+  if (!place) return
+  const { segment, distance, t } = nearestSegment(place.x, place.z)
+  if (segment && distance < 200) {
+    state.x = segment.a[0] + (segment.b[0] - segment.a[0]) * t
+    state.z = segment.a[1] + (segment.b[1] - segment.a[1]) * t
+    state.heading = Math.atan2(segment.b[0] - segment.a[0], segment.b[1] - segment.a[1])
+  } else {
+    state.x = place.x
+    state.z = place.z
+  }
+  state.speed = 0
+  camera.position.set(state.x - Math.sin(state.heading) * 9, groundHeight(state.x, state.z) + 4.5, state.z - Math.cos(state.heading) * 9)
+  toggleTravel(false)
+}
+
+
+travelList.addEventListener('click', event => { const item = event.target.closest('li'); if (item) travelTo(item.dataset.name) })
+
 const keys = new Set()
-window.debug = { keys, walkers, get state() { return state } }
-addEventListener('keydown', event => { keys.add(event.code); if (event.code.startsWith('Arrow')) event.preventDefault() })
+window.debug = { keys, walkers, travelTo, get state() { return state } }
+addEventListener('keydown', event => {
+  if (event.code === 'Escape' && !travel.hidden) return toggleTravel(false)
+  if (event.code === 'KeyT' && !/INPUT|TEXTAREA/.test(event.target.tagName)) return toggleTravel()
+  if (!travel.hidden) return
+  keys.add(event.code)
+  if (event.code.startsWith('Arrow')) event.preventDefault()
+})
 addEventListener('keyup', event => keys.delete(event.code))
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight
@@ -1062,9 +1365,11 @@ function step(dt, now) {
     streetEl.textContent = streetName(state.x, state.z)
   }
   updateWalkers(dt, now)
-  bloodTrail()
-  drawMinimap()
-}
+      bloodTrail()
+      updateCoins(dt)
+      updateTown(dt)
+    drawMinimap(dt)
+  }
 
 camera.position.set(state.x - Math.sin(state.heading) * 9, groundHeight(state.x, state.z) + 4.5, state.z - Math.cos(state.heading) * 9)
 
