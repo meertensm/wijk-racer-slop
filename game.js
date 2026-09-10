@@ -66,6 +66,9 @@ const COLORS = {
   glass:      new THREE.Color(0x26323f),
   door:       new THREE.Color(0x4a3222),
   chimney:    new THREE.Color(0x6b4a3a),
+  plaster:    [0xf3efe4, 0xe9e2d0, 0xd8d3c4, 0xf7f4ee, 0xe4d9c4, 0xcfd6cf].map(hex => new THREE.Color(hex)),
+  plinth:     new THREE.Color(0x4f4a45),
+  gutter:     new THREE.Color(0x50555c),
   road:       new THREE.Color(0x585b62),
   wear:       new THREE.Color(0x4d5057),
   sidewalk:   new THREE.Color(0xa9a59c),
@@ -257,6 +260,10 @@ const TEXTURES = {
     }
     grain(ctx, size, 60, 40, 500, 6, 0.35)
   }),
+  plaster: texture(2, (ctx, size) => {
+    speckle(ctx, size, 212, 16, 900, 30)
+    grain(ctx, size, 212, 36, 8000, 2, 0.3)
+  }),
   gravel: texture(1.5, (ctx, size) => {
     speckle(ctx, size, 190, 30, 300, 40)
     grain(ctx, size, 185, 130, 9000, 5, 0.8)
@@ -343,7 +350,7 @@ const TEXTURES = {
 }
 
 const textured = map => infectable(new THREE.MeshToonMaterial({ map, vertexColors: true, gradientMap: gradient, side: THREE.DoubleSide }))
-const MATERIALS = { plain: toon, asphalt: textured(TEXTURES.asphalt), paving: textured(TEXTURES.paving), gravel: textured(TEXTURES.gravel), brick: textured(TEXTURES.brick), tiles: textured(TEXTURES.tiles), ground: textured(TEXTURES.grass), window: textured(TEXTURES.window) }
+const MATERIALS = { plain: toon, asphalt: textured(TEXTURES.asphalt), paving: textured(TEXTURES.paving), gravel: textured(TEXTURES.gravel), plaster: textured(TEXTURES.plaster), brick: textured(TEXTURES.brick), tiles: textured(TEXTURES.tiles), ground: textured(TEXTURES.grass), window: textured(TEXTURES.window) }
 MATERIALS.window.map.wrapS = MATERIALS.window.map.wrapT = THREE.ClampToEdgeWrapping
 MATERIALS.window.map.repeat.set(1, 1)
 MATERIALS.window.userData.outlineParameters = { visible: false }
@@ -980,7 +987,7 @@ function hipRoof(building, groups) {
   const xs = local.map(p => p[0]), zs = local.map(p => p[1])
   const minX = Math.min(...xs) - 0.4, maxX = Math.max(...xs) + 0.4
   const minZ = Math.min(...zs) - 0.4, maxZ = Math.max(...zs) + 0.4
-  const inset = Math.min((maxZ - minZ) / 2, (maxX - minX) / 2)
+  const inset = Math.abs(Math.floor(minZ * 11)) % 3 === 0 ? 0 : Math.min((maxZ - minZ) / 2, (maxX - minX) / 2)
   const rise = Math.min((maxZ - minZ) * (0.35 + (Math.abs(minX * 3) % 10) / 40), 4)
   const midZ = (minZ + maxZ) / 2
   const top = building.base + building.h
@@ -994,9 +1001,19 @@ function hipRoof(building, groups) {
 
   const [chimneyX, , chimneyZ] = back([minX + inset + (maxX - minX - 2 * inset) * 0.3, midZ, 0])
   groups.plain.push(paint(new THREE.BoxGeometry(0.6, rise + 0.8, 0.6).translate(chimneyX, top + (rise + 0.8) / 2, chimneyZ), COLORS.chimney))
+  if (maxX - minX > 9 && rise > 1.8 && Math.abs(Math.floor(minX * 7)) % 2 === 0) {
+    const [dx, , dz] = back([(minX + maxX) / 2, minZ + (maxZ - minZ) * 0.24, 0]), dy = top + rise * 0.32
+    groups.plain.push(paint(new THREE.BoxGeometry(1.5, 1.1, 1.3).rotateY(-angle).translate(dx, dy + 0.55, dz), COLORS.walls[building.c]))
+    groups.plain.push(paint(new THREE.BoxGeometry(1.7, 0.12, 1.5).rotateY(-angle).translate(dx, dy + 1.12, dz), COLORS.roofs[building.c]))
+    groups.plain.push(paint(new THREE.BoxGeometry(0.9, 0.7, 0.06).rotateY(-angle).translate(dx + 0.67 * sin, dy + 0.55, dz - 0.67 * cos), COLORS.glass))
+  }
+  if (maxX - minX > 12 && Math.abs(Math.floor(maxZ * 5)) % 3 === 0) {
+    const [x2, , z2] = back([maxX - inset - (maxX - minX - 2 * inset) * 0.2, midZ, 0])
+    groups.plain.push(paint(new THREE.BoxGeometry(0.5, rise + 0.6, 0.5).translate(x2, top + (rise + 0.6) / 2, z2), COLORS.chimney))
+  }
 }
 
-function facadeDetails(building, parts, signParts) {
+function facadeDetails(building, parts, signParts, plainParts) {
   const points = building.p
   const acc = { positions: [], normals: [], colors: [], uvs: [] }
   const white = new THREE.Color(0xffffff)
@@ -1030,7 +1047,10 @@ function facadeDetails(building, parts, signParts) {
       const cx = ax + ux * spacing * k, cz = az + uz * spacing * k
       for (let floor = 0; floor < (brand ? 1 : floors); floor++) {
               if (i === front && floor === 0 && k === 1 && building.h >= 3) quadInto(acc, cx, cz, ux, uz, nx, nz, 1.0, terrainHeight(cx, cz), 2.2 + building.base - terrainHeight(cx, cz), white, 1)
-              else quadInto(acc, cx, cz, ux, uz, nx, nz, 1.2, building.base + floor * 3 + 1, 1.4, white, 0)
+              else {
+                quadInto(acc, cx, cz, ux, uz, nx, nz, 1.2, building.base + floor * 3 + 1, 1.4, white, 0)
+                plainParts.push(paint(new THREE.BoxGeometry(1.36, 0.08, 0.18).rotateY(Math.atan2(-uz, ux)).translate(cx + nx * 0.1, building.base + floor * 3 + 0.96, cz + nz * 0.1), COLORS.curb))
+              }
             }
           }
         })
@@ -1058,10 +1078,56 @@ function buildBuildings(groups) {
     else if (building.roof === 'flat' && building.h <= 8 && Math.abs(seed) % 7 === 0) building.roof = 'hip'
     const bottom = Math.min(...heights) - 0.5
     const shape = new THREE.Shape(building.p.map(([x, z]) => new THREE.Vector2(x, -z)))
-    groups.brick.push(paint(new THREE.ExtrudeGeometry(shape, { depth: building.base + building.h - bottom, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, bottom, 0), COLORS.walls[building.c]))
+    const plaster = Math.abs(Math.floor(seed / 3)) % 4 === 0
+    const walls = new THREE.ExtrudeGeometry(shape, { depth: building.base + building.h - bottom, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, bottom, 0)
+    ;(plaster ? groups.plaster : groups.brick).push(paint(walls, plaster ? COLORS.plaster[building.c % COLORS.plaster.length] : COLORS.walls[building.c]))
+    const plinth = new THREE.Shape(offsetRing(building.p, 0.06).map(([x, z]) => new THREE.Vector2(x, -z)))
+    groups.plain.push(paint(new THREE.ExtrudeGeometry(plinth, { depth: building.base - bottom + 0.45, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, bottom, 0), COLORS.plinth))
+    gutters(building, groups.plain)
     if (building.roof === 'hip') hipRoof(building, groups)
-    facadeDetails(building, groups.window, groups.sign)
+    else if (footprintArea(building.p) > 60) {
+      const [cx, cz] = centroid(building.p)
+      groups.plain.push(paint(new THREE.BoxGeometry(1.4, 0.9, 1.1).translate(cx, building.base + building.h + 0.45, cz), COLORS.concrete))
+    }
+    facadeDetails(building, groups.window, groups.sign, groups.plain)
 
+  })
+}
+
+function offsetRing(points, amount) {
+  const [cx, cz] = centroid(points)
+  return points.map(([x, z], i) => {
+    const [px, pz] = points[(i + points.length - 1) % points.length], [nx, nz] = points[(i + 1) % points.length]
+    const a = [pz - z, x - px], b = [z - nz, nx - x]
+    const la = Math.hypot(...a) || 1, lb = Math.hypot(...b) || 1
+    let ox = a[0] / la + b[0] / lb, oz = a[1] / la + b[1] / lb
+    const length = Math.hypot(ox, oz) || 1
+    ox /= length; oz /= length
+    if ((x + ox - cx) ** 2 + (z + oz - cz) ** 2 < (x - cx) ** 2 + (z - cz) ** 2) { ox = -ox; oz = -oz }
+    return [x + ox * amount, z + oz * amount]
+  })
+}
+
+function centroid(points) {
+  return [points.reduce((sum, p) => sum + p[0], 0) / points.length, points.reduce((sum, p) => sum + p[1], 0) / points.length]
+}
+
+function footprintArea(points) {
+  let area = 0
+  points.forEach(([x, z], i) => { const [nx, nz] = points[(i + 1) % points.length]; area += x * nz - nx * z })
+  return Math.abs(area) / 2
+}
+
+function gutters(building, parts) {
+  const top = building.base + building.h
+  building.p.forEach(([ax, az], i) => {
+    const [bx, bz] = building.p[(i + 1) % building.p.length]
+    const length = Math.hypot(bx - ax, bz - az)
+    if (length < 1.5) return
+    const ux = (bx - ax) / length, uz = (bz - az) / length
+    let nx = uz, nz = -ux
+    if (inside(building.p, (ax + bx) / 2 + nx * 0.3, (az + bz) / 2 + nz * 0.3)) { nx = -nx; nz = -nz }
+    parts.push(paint(new THREE.BoxGeometry(length, 0.14, 0.14).rotateY(Math.atan2(-uz, ux)).translate((ax + bx) / 2 + nx * 0.09, top - 0.07, (az + bz) / 2 + nz * 0.09), COLORS.gutter))
   })
 }
 
@@ -1099,7 +1165,7 @@ function buildGround() {
 }
 
 async function buildWorld() {
-  const groups = { plain: [], asphalt: [], paving: [], gravel: [], brick: [], tiles: [], ground: [], sign: [], window: [] }
+  const groups = { plain: [], asphalt: [], paving: [], gravel: [], brick: [], plaster: [], tiles: [], ground: [], sign: [], window: [] }
   await phase('roads', () => buildRoads(groups))
   await phase('buildings', () => buildBuildings(groups))
   await phase('merge', () => { for (const [name, parts] of Object.entries(groups)) {
