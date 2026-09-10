@@ -1289,11 +1289,25 @@ function updateWalkers(dt, now) {
     if (explosion || Math.hypot(walker.x - state.x, walker.z - state.z) >= 1.6) return
     if (walker.kind === 'dogwalker') runOver(walker)
     else if (walker.kind === 'labradoodle') { if (!walker.owner.dead) runOver(walker.owner) }
+    else if (walker.kind === 'zombie') squashZombie(walker)
     else explode(kind.label)
   })
 }
 const blood = new THREE.MeshBasicMaterial({ color: 0x7a0c0c, transparent: true, opacity: 0.9 })
 blood.userData.outlineParameters = { visible: false }
+
+const slime = new THREE.MeshBasicMaterial({ color: 0x4f8a2a, transparent: true, opacity: 0.85 })
+slime.userData.outlineParameters = { visible: false }
+
+function squashZombie(walker) {
+  walker.dead = true
+  placeWalker(walker, 0)
+  const splat = new THREE.Mesh(new THREE.CircleGeometry(1.2, 12).rotateX(-Math.PI / 2), slime)
+  splat.position.set(walker.x, groundHeight(walker.x, walker.z) + 0.21, walker.z)
+  scene.add(splat)
+  streetEl.textContent = 'Zombie geplet: +0,2 G-Point'
+  awardCoin(walker.x, walker.z, 0.2)
+}
 
 function runOver(walker) {
   walker.dead = true
