@@ -45,9 +45,9 @@ function nextSlide() {
   document.getElementById('player-name').value = localStorage.getItem('playerName') || `Panda-${Math.floor(Math.random() * 900 + 100)}`
 const slideTimer = setInterval(nextSlide, 4000)
 let progress = 0
-const PHASES = { fetch: 3, terrain: 12, stamp: 2, prepare: 3, index: 1, roads: 8, buildings: 30, merge: 10, ground: 20, trees: 3, walkers: 8 }
+const PHASES = { fetch: 3, terrain: 12, stamp: 2, prepare: 3, index: 1, roads: 8, buildings: 30, merge: 10, ground: 20, trees: 3, server: 2 }
 const total = Object.values(PHASES).reduce((a, b) => a + b, 0)
-const LABELS = { fetch: 'Kaart ophalen', terrain: 'Terrein boetseren', stamp: 'Wegen aanleggen', prepare: 'Bruggen bouwen', index: 'Straatnamen leren', roads: 'Asfalt gieten', buildings: 'Huizen metselen', merge: 'Wijken samenvoegen', ground: 'Gras zaaien', trees: 'Bomen planten', walkers: 'Beagles loslaten' }
+const LABELS = { fetch: 'Kaart ophalen', terrain: 'Terrein boetseren', stamp: 'Wegen aanleggen', prepare: 'Bruggen bouwen', index: 'Straatnamen leren', roads: 'Asfalt gieten', buildings: 'Huizen metselen', merge: 'Wijken samenvoegen', ground: 'Gras zaaien', trees: 'Bomen planten', server: 'Verbinden met server' }
 
 async function phase(name, fn) {
   loadingPhase.textContent = LABELS[name] + '…'
@@ -1197,7 +1197,10 @@ function buildCar() {
 
 // WALKERS:
 
-const walkers = []
+const NPC_CAP = 512
+const npcs = new Map()
+const npcMeshes = {}
+const nearest = {}
 let explosion = null
 
 function box(parts, w, h, d, color, x, y, z, tilt = 0) {
@@ -1350,132 +1353,133 @@ function speakerboyGeometry() {
 }
 
 const KINDS = {
-  beagle:    { geometry: beagleGeometry,    label: 'Beagle',              bob: 0.05, speed: () => random() < 0.25 ? 0 : 0.6 + random() * 1.2 },
-  baldman:   { geometry: baldManGeometry,   label: 'Kale man',            bob: 0.03, speed: () => random() < 0.3 ? 0 : 0.8 + random() * 0.6 },
-  baldflag:  { geometry: baldFlagGeometry,  label: 'Kale man met Brabantse vlag', bob: 0.03, speed: () => random() < 0.3 ? 0 : 0.8 + random() * 0.6 },
-  dogwalker:   { geometry: dogWalkerGeometry,   label: 'Niet poep oprapende labradoodle uitlater', bob: 0.03, speed: () => random() < 0.35 ? 0 : 0.7 + random() * 0.5 },
-  labradoodle: { geometry: labradoodleGeometry, label: 'Labradoodle',         bob: 0.08, speed: () => 0 },
-  tattooman:   { geometry: tattooManGeometry,   label: 'Getatoeëerde kale man', bob: 0, speed: () => 0 },
-  speakerboy:  { geometry: speakerboyGeometry,  label: 'Speakerboy',            bob: 0.02, speed: () => 4.5 + random() * 1.5 },
-  zwerver:     { geometry: zwerverGeometry,     label: 'Zwerver',               bob: 0.02, speed: () => random() < 0.6 ? 0 : 0.3 + random() * 0.3 },
-  zombie:      { geometry: zombieGeometry,      label: 'Zombie',                bob: 0.06, speed: () => 0.6 },
-  junkie:      { geometry: junkieGeometry,      label: 'Junk',                  bob: 0.05, speed: () => random() < 0.2 ? 0 : 1.6 + random() * 1.2 }
+  beagle:    { geometry: beagleGeometry,    label: 'Beagle',              bob: 0.05 },
+  baldman:   { geometry: baldManGeometry,   label: 'Kale man',            bob: 0.03 },
+  baldflag:  { geometry: baldFlagGeometry,  label: 'Kale man met Brabantse vlag', bob: 0.03 },
+  dogwalker:   { geometry: dogWalkerGeometry,   label: 'Niet poep oprapende labradoodle uitlater', bob: 0.03 },
+  labradoodle: { geometry: labradoodleGeometry, label: 'Labradoodle',         bob: 0.08 },
+  tattooman:   { geometry: tattooManGeometry,   label: 'Getatoeëerde kale man', bob: 0 },
+  speakerboy:  { geometry: speakerboyGeometry,  label: 'Speakerboy',            bob: 0.02 },
+  zwerver:     { geometry: zwerverGeometry,     label: 'Zwerver',               bob: 0.02 },
+  zombie:      { geometry: zombieGeometry,      label: 'Zombie',                bob: 0.06 },
+  junkie:      { geometry: junkieGeometry,      label: 'Junk',                  bob: 0.05 }
 }
 
 const REWARD = { zombie: 0.2, zwerver: 0.2, junkie: 0.2, baldman: 0.1, baldflag: 0.1, speakerboy: 5 }
-const walkerMeshes = {}
 const dummy = new THREE.Object3D()
 
-function buildWalkers() {
-  const spots = []
-  world.roads.filter(road => road.kind === 'road' && road.w >= 5 && road.w <= 8).forEach(road => {
-    const points = road.samples
-    for (let i = 4; i < points.length; i += 8) {
-      const [x, z] = points[i], [px, pz] = points[i - 1]
-      const length = Math.hypot(x - px, z - pz) || 1
-      const side = random() < 0.5 ? -1 : 1, offset = road.w / 2 + 2.5
-      spots.push([x - (z - pz) / length * offset * side, z + (x - px) / length * offset * side])
-    }
-  })
-  const zones = world.zones || []
-  const zoneRaster = new Uint8Array(T.cols * T.rows)
-  zones.forEach((zone, index) => rasterize(zone.p, zoneRaster, index + 1, true))
-  const zoneOf = ([x, z]) => zones[zoneRaster[clamp(Math.round((z - T.z0) / T.sz), 0, T.rows - 1) * T.cols + clamp(Math.round((x - T.x0) / T.sx), 0, T.cols - 1)] - 1]
-  const fromStart = ([x, z]) => Math.hypot(x - world.start.x, z - world.start.z)
-  const candidates = spots.sort(() => random() - 0.5).filter(spot => fromStart(spot) > 30 && !blocked(...spot))
-  const chosen = new Set([...candidates.filter(spot => fromStart(spot) < 600).slice(0, 400), ...candidates.filter(spot => fromStart(spot) >= 600).slice(0, 600)])
-  zones.forEach(zone => candidates.filter(spot => zoneOf(spot) === zone).slice(0, 150).forEach(spot => chosen.add(spot)))
-
-  chosen.forEach(([x, z]) => {
-    const zone = zoneOf([x, z])
-    const kinds = zone ? zone.kind.split(',') : null
-    let kind = kinds ? kinds[Math.floor(random() * kinds.length)] : random() < 0.17 ? 'dogwalker' : 'beagle'
-    if (kind === 'baldman' && random() < 0.3) kind = 'baldflag'
-    if (kind === 'speakerboy' && walkers.some(other => other.kind === 'speakerboy' && Math.hypot(other.x - x, other.z - z) < 700)) kind = 'beagle'
-    const heading = random() * Math.PI * 2
-    const walker = { kind, x, z, home: [x, z], heading, speed: 0, timer: 0 }
-    walkers.push(walker)
-    if (kind === 'dogwalker') walkers.push(walker.dog = { kind: 'labradoodle', owner: walker, x: x + Math.sin(heading) * 1.1, z: z + Math.cos(heading) * 1.1, home: [x, z], heading, speed: 0, timer: 1e9 })
-  })
-    ;(world.spots || []).forEach(spot => walkers.push({ kind: spot.kind, x: spot.x, z: spot.z, home: [spot.x, spot.z], heading: spot.heading, speed: 0, timer: 1e9 }))
-    Object.entries(KINDS).forEach(([kind, { geometry }]) => {
-      const group = walkers.filter(walker => walker.kind === kind)
-    if (!group.length) return
-    const mesh = new THREE.InstancedMesh(geometry(), toon, group.length)
+function buildNpcMeshes() {
+  Object.entries(KINDS).forEach(([kind, { geometry }]) => {
+    const mesh = new THREE.InstancedMesh(geometry(), toon, NPC_CAP)
+    mesh.count = 0
     mesh.castShadow = true
     mesh.frustumCulled = false
     scene.add(mesh)
-    walkerMeshes[kind] = mesh
-    group.forEach((walker, index) => { walker.index = index; placeWalker(walker, 0) })
+    npcMeshes[kind] = { mesh, free: [], used: 0 }
+    nearest[kind] = Infinity
   })
 }
 
-function placeWalker(walker, bob) {
-  dummy.position.set(walker.x, terrainHeight(walker.x, walker.z) + bob, walker.z)
-  dummy.rotation.set(0, walker.heading, 0)
+function allocSlot(kind) {
+  const slots = npcMeshes[kind]
+  if (slots.free.length) return slots.free.pop()
+  if (slots.used >= NPC_CAP) return -1
+  slots.mesh.count = ++slots.used
+  return slots.used - 1
+}
+
+function freeSlot(kind, index) {
+  if (index < 0) return
+  dummy.position.set(0, -100, 0)
+  dummy.rotation.set(0, 0, 0)
+  dummy.scale.set(0, 0, 0)
+  dummy.updateMatrix()
+  npcMeshes[kind].mesh.setMatrixAt(index, dummy.matrix)
+  npcMeshes[kind].mesh.instanceMatrix.needsUpdate = true
+  npcMeshes[kind].free.push(index)
+}
+
+function placeNpc(npc, bob) {
+  if (npc.index < 0) return
+  dummy.position.set(npc.x, terrainHeight(npc.x, npc.z) + bob, npc.z)
+  dummy.rotation.set(0, npc.heading, 0)
   dummy.scale.set(1, 1, 1)
-  if (walker.dead) {
+  if (npc.dead) {
     dummy.position.y += 0.15
-    dummy.rotation.set(Math.PI / 2, walker.heading, 0)
+    dummy.rotation.set(Math.PI / 2, npc.heading, 0)
     dummy.scale.y = 0.4
   }
   dummy.updateMatrix()
-  walkerMeshes[walker.kind].setMatrixAt(walker.index, dummy.matrix)
-  walkerMeshes[walker.kind].instanceMatrix.needsUpdate = true
+  npcMeshes[npc.kind].mesh.setMatrixAt(npc.index, dummy.matrix)
+  npcMeshes[npc.kind].mesh.instanceMatrix.needsUpdate = true
 }
 
-function updateWalkers(dt, now) {
-  walkers.forEach(walker => {
-    if (walker.dead) return combo(walker)
-    if (Math.hypot(walker.x - state.x, walker.z - state.z) > 700) return
-    const kind = KINDS[walker.kind]
-    if (walker.kind === 'labradoodle' && !walker.owner.dead) {
-      walker.x = walker.owner.x + Math.sin(walker.owner.heading) * 1.1
-      walker.z = walker.owner.z + Math.cos(walker.owner.heading) * 1.1
-      walker.heading = walker.owner.heading
-      placeWalker(walker, walker.owner.speed ? Math.abs(Math.sin(now / 1000 * 12)) * 0.08 : 0)
-      if (!explosion && Math.hypot(walker.x - state.x, walker.z - state.z) < 1.6) runOver(walker.owner)
-      return
+function applySnapshot({ npcs: rows = [], gone = [] }) {
+  gone.forEach(removeNpc)
+  const at = performance.now()
+  rows.forEach(([id, kindIndex, x, z, heading, speed, dead]) => {
+    const kind = KIND_NAMES[kindIndex]
+    let npc = npcs.get(id)
+    if (!npc) {
+      npc = { id, kind, x, z, heading, speed, dead: false, index: allocSlot(kind), splat: null }
+      npcs.set(id, npc)
     }
-    walker.timer -= dt
-    if (walker.kind === 'labradoodle' && walker.owner.dead && walker.timer < 0) {
-      walker.panic = (walker.panic || 0) - 1
-      walker.speed = walker.panic > 0 ? 4.5 : 1.2 + random()
-      walker.heading = walker.panic > 0 ? Math.atan2(walker.x - state.x, walker.z - state.z) + (random() - 0.5) : walker.heading + (random() - 0.5) * 3
-      walker.timer = 0.8 + random()
-    } else if (walker.timer < 0) {
-      walker.speed = kind.speed()
-      if (walker.kind === 'zombie' && Math.hypot(walker.x - state.x, walker.z - state.z) < 70) {
-        walker.heading = Math.atan2(state.x - walker.x, state.z - walker.z) + (random() - 0.5) * 0.4
-        walker.timer = 0.6
-        return
-      }
-      if (walker.kind === 'junkie') walker.timer = 0.4 + random() * 0.8
-      if (walker.kind === 'speakerboy') { walker.timer = 3 + random() * 4; walker.heading += (random() - 0.5) * 0.8 }
-      if (walker.kind === 'dogwalker' && !walker.speed && walker.dog && random() < 0.5 && now - (walker.pooped || 0) > 45000) { walker.pooped = now; dropPoop(walker.dog.x, walker.dog.z) }
-      if (walker.speed) {
-        const far = Math.hypot(walker.home[0] - walker.x, walker.home[1] - walker.z) > (walker.kind === 'dogwalker' ? 150 : walker.kind === 'speakerboy' ? 120 : 40)
-        walker.heading = far ? Math.atan2(walker.home[0] - walker.x, walker.home[1] - walker.z) : walker.heading + (random() - 0.5) * 3
-      }
-      walker.timer = 2 + random() * 4
-    }
-    const x = walker.x + Math.sin(walker.heading) * walker.speed * dt, z = walker.z + Math.cos(walker.heading) * walker.speed * dt
-    if (blocked(x, z)) {
-      walker.heading += Math.PI
-    } else {
-      walker.x = clamp(x, minX, maxX)
-      walker.z = clamp(z, minZ, maxZ)
-    }
-    placeWalker(walker, walker.speed ? Math.abs(Math.sin(now / 1000 * 12)) * kind.bob : 0)
-    const distance = Math.hypot(walker.x - state.x, walker.z - state.z)
-    if (walker.kind.startsWith('bald') && distance < 12 && Math.abs(state.speed) > 6 && now - lastGodver > 6000) { lastGodver = now; curse(walker.kind === 'baldflag' ? 'brabant' : 'godver') }
-    if (walker.kind === 'speakerboy' && distance < 40 && now - lastShout > 9000) { lastShout = now; curse('speakerboy') }
-    if (explosion || distance >= 1.6) return
-    if (walker.kind === 'dogwalker') runOver(walker)
-    else if (walker.kind === 'labradoodle') { if (!walker.owner.dead) runOver(walker.owner) }
-    else if (REWARD[walker.kind]) squash(walker)
-    else explode(kind.label)
+    if (Math.hypot(npc.x - x, npc.z - z) > 20) { npc.x = x; npc.z = z; npc.heading = heading }
+    Object.assign(npc, { tx: x, tz: z, th: heading, speed, at })
+    if (npc.predictedAt) return
+    if (dead) markDead(npc)
+    else if (npc.dead) revive(npc)
   })
+}
+
+function removeNpc(id) {
+  const npc = npcs.get(id)
+  if (!npc) return
+  freeSlot(npc.kind, npc.index)
+  if (npc.splat) scene.remove(npc.splat)
+  npcs.delete(id)
+}
+
+function updateNpcs(dt, now) {
+  Object.keys(KINDS).forEach(kind => nearest[kind] = Infinity)
+  const perf = performance.now()
+  npcs.forEach(npc => {
+    if (npc.predictedAt && perf - npc.predictedAt > 500) unpredict(npc)
+    if (!npc.dead) {
+      const ahead = Math.min((perf - npc.at) / 1000, 0.3) * npc.speed
+      const gx = npc.tx + Math.sin(npc.th) * ahead, gz = npc.tz + Math.cos(npc.th) * ahead
+      const k = Math.min(1, dt * 10)
+      npc.x += (gx - npc.x) * k
+      npc.z += (gz - npc.z) * k
+      npc.heading += Math.atan2(Math.sin(npc.th - npc.heading), Math.cos(npc.th - npc.heading)) * k
+      placeNpc(npc, npc.speed ? Math.abs(Math.sin(now / 1000 * 12)) * KINDS[npc.kind].bob : 0)
+    }
+    if (npc.dead) return
+    const distance = Math.hypot(npc.x - state.x, npc.z - state.z)
+    nearest[npc.kind] = Math.min(nearest[npc.kind], distance)
+    if (npc.kind.startsWith('bald') && distance < 12 && Math.abs(state.speed) > 6 && now - lastGodver > 6000) { lastGodver = now; curse(npc.kind === 'baldflag' ? 'brabant' : 'godver') }
+    if (npc.kind === 'speakerboy' && distance < 40 && now - lastShout > 9000) { lastShout = now; curse('speakerboy') }
+    if (!explosion && distance < 1.6) contact(npc, perf)
+  })
+}
+
+function contact(npc, perf) {
+  sendPos(perf, true)
+  if (npc.kind === 'labradoodle') return
+  if (npc.kind === 'dogwalker' || REWARD[npc.kind]) { npc.predictedAt = perf; killEffects(npc) }
+  else explode(KINDS[npc.kind].label)
+}
+
+function unpredict(npc) {
+  delete npc.predictedAt
+  revive(npc)
+}
+
+function revive(npc) {
+  npc.dead = false
+  if (npc.splat) scene.remove(npc.splat)
+  npc.splat = null
+  placeNpc(npc, 0)
 }
 const blood = new THREE.MeshBasicMaterial({ color: 0x7a0c0c, transparent: true, opacity: 0.9 })
 blood.userData.outlineParameters = { visible: false }
@@ -1483,54 +1487,26 @@ blood.userData.outlineParameters = { visible: false }
 const slime = new THREE.MeshBasicMaterial({ color: 0x4f8a2a, transparent: true, opacity: 0.85 })
 slime.userData.outlineParameters = { visible: false }
 
-function squash(walker, remote = false) {
-  walker.dead = true
-  placeWalker(walker, 0)
-  const splat = new THREE.Mesh(new THREE.CircleGeometry(1.2, 12).rotateX(-Math.PI / 2), walker.kind === 'zombie' ? slime : blood)
-  splat.position.set(walker.x, groundHeight(walker.x, walker.z) + 0.21, walker.z)
-  scene.add(splat)
-  if (remote) return
-  const reward = REWARD[walker.kind]
-  streetEl.textContent = `${KINDS[walker.kind].label} geplet: +${reward.toLocaleString('nl-NL')} coin`
-  thud(0.8)
-  scream(walker.kind)
-  if (walker.kind.startsWith('bald')) setTimeout(() => curse(walker.kind === 'baldflag' ? 'brabant' : 'godver'), 500)
-  if (walker.kind === 'speakerboy') curse('speakerboy')
-  awardCoin(walker.x, walker.z, reward)
-  dirty(0.12)
-  send({ kill: walkers.indexOf(walker), x: +walker.x.toFixed(1), z: +walker.z.toFixed(1) })
+function markDead(npc) {
+  npc.dead = true
+  placeNpc(npc, 0)
+  if (npc.splat) return
+  npc.splat = new THREE.Mesh(new THREE.CircleGeometry(npc.kind === 'dogwalker' ? 1.4 : 1.2, 12).rotateX(-Math.PI / 2), npc.kind === 'zombie' ? slime : blood)
+  npc.splat.position.set(npc.x, groundHeight(npc.x, npc.z) + 0.21, npc.z)
+  scene.add(npc.splat)
 }
 
-function remoteKill({ kill, x, z }) {
-  const walker = walkers[kill]
-  if (!walker || walker.dead) return
-  walker.x = x
-  walker.z = z
-  if (walker.kind === 'dogwalker') runOver(walker, true)
-  else if (REWARD[walker.kind]) squash(walker, true)
-}
-
-function runOver(walker, remote = false) {
-  walker.dead = true
-  walker.deadAt = performance.now()
-  walker.stage = 0
-  walker.onTop = !remote
-  placeWalker(walker, 0)
-  const splat = new THREE.Mesh(new THREE.CircleGeometry(1.4, 12).rotateX(-Math.PI / 2), blood)
-  splat.position.set(walker.x, groundHeight(walker.x, walker.z) + 0.21, walker.z)
-  scene.add(splat)
-    const dog = walkers.find(other => other.owner === walker)
-    if (dog) { dog.panic = 6; dog.timer = 0 }
-    if (remote) return
-    send({ kill: walkers.indexOf(walker), x: +walker.x.toFixed(1), z: +walker.z.toFixed(1) })
-    state.blood = 45
-    state.bloodAt = [state.x, state.z]
-  streetEl.textContent = 'Niet poep oprapende labradoodle uitlater overreden: +1 coin'
-  thud(1)
-  scream('man')
-  setTimeout(() => curse('gerard'), 700)
-  dirty(0.2)
-  awardCoin(walker.x, walker.z)
+function killEffects(npc) {
+  markDead(npc)
+  const gerard = npc.kind === 'dogwalker', reward = gerard ? 1 : REWARD[npc.kind]
+  streetEl.textContent = gerard ? 'Niet poep oprapende labradoodle uitlater overreden: +1 coin' : `${KINDS[npc.kind].label} geplet: +${reward.toLocaleString('nl-NL')} coin`
+  thud(gerard ? 1 : 0.8)
+  scream(gerard ? 'man' : npc.kind)
+  if (gerard) { setTimeout(() => curse('gerard'), 700); state.blood = 45; state.bloodAt = [state.x, state.z] }
+  if (npc.kind.startsWith('bald')) setTimeout(() => curse(npc.kind === 'baldflag' ? 'brabant' : 'godver'), 500)
+  if (npc.kind === 'speakerboy') curse('speakerboy')
+  dirty(gerard ? 0.2 : 0.12)
+  spawnCoin(npc.x, npc.z)
 }
 
 const coinsEl = document.getElementById('coins')
@@ -1539,18 +1515,18 @@ coinFace.colorSpace = THREE.SRGBColorSpace
 const coinMaterial = [new THREE.MeshToonMaterial({ color: 0xffc233, gradientMap: gradient }), new THREE.MeshToonMaterial({ map: coinFace, color: 0xffd35c, gradientMap: gradient }), new THREE.MeshToonMaterial({ map: coinFace, color: 0xffd35c, gradientMap: gradient })]
 const coinGeometry = new THREE.CylinderGeometry(0.6, 0.6, 0.1, 24).rotateX(Math.PI / 2)
 const coins = []
-let gpunten = Number(localStorage.getItem('gpunten') || 0)
-coinsEl.querySelector('span').textContent = gpunten.toLocaleString('nl-NL')
-coinsEl.hidden = gpunten === 0
+let score = 0
 
-function awardCoin(x, z, amount = 1) {
-  gpunten += amount
+function showScore(value) {
+  const bump = value > score
+  score = value
+  coinsEl.querySelector('span').textContent = score.toLocaleString('nl-NL')
+  coinsEl.hidden = score === 0
+  if (bump) { coinsEl.classList.remove('bump'); requestAnimationFrame(() => coinsEl.classList.add('bump')) }
   renderPlayers()
-  localStorage.setItem('gpunten', gpunten)
-      coinsEl.querySelector('span').textContent = gpunten.toLocaleString('nl-NL')
-      coinsEl.hidden = false
-      coinsEl.classList.remove('bump')
-  requestAnimationFrame(() => coinsEl.classList.add('bump'))
+}
+
+function spawnCoin(x, z) {
   const coin = new THREE.Mesh(coinGeometry, coinMaterial)
   coin.position.set(x, groundHeight(x, z) + 1, z)
   scene.add(coin)
@@ -1582,22 +1558,6 @@ function updateTown(dt) {
   townSign.textContent = town.name
   townSign.classList.remove('show')
   requestAnimationFrame(() => townSign.classList.add('show'))
-}
-
-function combo(walker) {
-  if (walker.kind !== 'dogwalker' || walker.stage >= 2) return
-  const near = Math.hypot(walker.x - state.x, walker.z - state.z) < 1.8
-  if (!near) { walker.onTop = false; return }
-  if (walker.onTop || performance.now() - walker.deadAt > 5000) return
-  const wanted = walker.stage === 0 ? state.speed < -0.5 : state.speed > 0.5
-  if (!wanted) return
-  walker.onTop = true
-  walker.stage++
-  walker.deadAt = performance.now()
-  state.blood = 45
-  state.bloodAt = [state.x, state.z]
-  streetEl.textContent = walker.stage === 1 ? 'Achteruit over de uitlater: +½ coin' : 'En nog eens vooruit: +½ coin'
-  awardCoin(walker.x, walker.z, 0.5)
 }
 
 const rubber = new THREE.MeshBasicMaterial({ color: 0x1c1c1c, transparent: true, opacity: 0.55 })
@@ -1639,20 +1599,26 @@ function bloodTrail() {
   }
 }
 
-const poops = []
+const poops = new Map()
 const poopGeometry = mergeGeometries([
   new THREE.BoxGeometry(0.16, 0.12, 0.16).translate(0.02, 0.06, 0),
   new THREE.BoxGeometry(0.11, 0.1, 0.11).translate(-0.02, 0.16, 0.01)
 ])
 const poopMaterial = solid(0x4a2e12)
 
-function dropPoop(x, z, remote = false) {
-  if (!remote) send({ poop: [+x.toFixed(1), +z.toFixed(1)] })
+function addPoop([id, x, z, born]) {
+  if (poops.has(id)) return
   const mesh = new THREE.Mesh(poopGeometry, poopMaterial)
   mesh.position.set(x, groundHeight(x, z), z)
   scene.add(mesh)
-  poops.push({ x, z, y: mesh.position.y, born: performance.now(), mesh })
-  if (poops.length > 120) scene.remove(poops.shift().mesh)
+  poops.set(id, { x, z, y: mesh.position.y, born: localTime(born), mesh })
+}
+
+function removePoop(id) {
+  const poop = poops.get(id)
+  if (!poop) return
+  scene.remove(poop.mesh)
+  poops.delete(id)
 }
 
 const PUFFS = 200
@@ -1693,10 +1659,13 @@ const poo = new THREE.MeshBasicMaterial({ color: 0x6b4a1e, transparent: true, op
 poo.userData.outlineParameters = { visible: false }
 
 function pickUpPoop() {
-  const index = poops.findIndex(poop => Math.hypot(poop.x - state.x, poop.z - state.z) < 1.4)
-  if (index < 0) return
-  scene.remove(poops[index].mesh)
-  poops.splice(index, 1)
+  const hit = [...poops].find(([, poop]) => Math.hypot(poop.x - state.x, poop.z - state.z) < 1.4)
+  if (!hit) return
+  removePoop(hit[0])
+  stepInPoop()
+}
+
+function stepInPoop() {
   state.poo = 45
   state.pooAt = [state.x, state.z]
   streetEl.textContent = 'Door de drol gereden'
@@ -1726,7 +1695,7 @@ function updateInfection(now) {
   smears.forEach(smear => { smear.mesh.material.opacity = 0.85 * (1 - (now - smear.born) / SMEAR_LIFE) })
   const sources = [
     ...smears.map(smear => ({ x: smear.x, y: smear.y, z: smear.z, radius: 2 * (1 - (now - smear.born) / SMEAR_LIFE) })),
-    ...poops.map(poop => ({ x: poop.x, y: poop.y, z: poop.z, radius: Math.min(30, (now - poop.born) / 1000 * 0.4) }))
+    ...[...poops.values()].map(poop => ({ x: poop.x, y: poop.y, z: poop.z, radius: Math.min(30, (now - poop.born) / 1000 * 0.4) }))
   ]
   const nearest = sources.map(source => ({ source, distance: Math.hypot(source.x - state.x, source.z - state.z) - source.radius })).sort((a, b) => a.distance - b.distance).slice(0, POOP_SLOTS)
     poopUniform.value.forEach((slot, i) => {
@@ -1739,6 +1708,7 @@ function updateInfection(now) {
   }
 
 function explode(label) {
+  if (explosion) return
   const fireball = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), new THREE.MeshBasicMaterial({ color: 0xff7a1a, transparent: true }))
   fireball.material.userData.outlineParameters = { visible: false }
   fireball.position.set(state.x, groundHeight(state.x, state.z) + 1, state.z)
@@ -1752,11 +1722,12 @@ function explode(label) {
   state.shake = 3
   thud(1.5)
   streetEl.textContent = `BOEM! ${label} geraakt`
-  setTimeout(respawn, 2500)
+  explosion.fallback = setTimeout(respawn, 3500)
 }
 
 function respawn() {
   if (!explosion) return
+  clearTimeout(explosion.fallback)
   scene.remove(explosion.fireball)
   explosion.debris.forEach(({ mesh }) => {
     car.add(mesh)
@@ -1768,17 +1739,6 @@ function respawn() {
   state.shake = 0
   state.dirt = 0
   dirty(0)
-  gpunten = 0
-  renderPlayers()
-  localStorage.setItem('gpunten', 0)
-  coinsEl.querySelector('span').textContent = '0'
-  coinsEl.hidden = true
-  walkers.forEach(walker => {
-    if (walker.dead || Math.hypot(walker.x - state.x, walker.z - state.z) > 6) return
-    walker.x += Math.cos(state.heading) * 12
-    walker.z -= Math.sin(state.heading) * 12
-    walker.home = [walker.x, walker.z]
-  })
   streetEl.textContent = 'Nieuwe Panda'
 }
 
@@ -1912,11 +1872,11 @@ function drawMinimap(dt) {
       map.fill()
     }
   }
-  walkers.forEach(walker => {
-    if (walker.dead || Math.abs(walker.x - state.x) > MAP_RADIUS || Math.abs(walker.z - state.z) > MAP_RADIUS) return
-    map.fillStyle = walker.kind === 'beagle' ? '#ff9f1a' : walker.kind === 'labradoodle' ? '#ffe28a' : walker.kind.startsWith('bald') ? '#ff4fd8' : walker.kind === 'speakerboy' ? '#ff2bd6' : walker.kind === 'zombie' ? '#39ff14' : '#4fd2ff'
+  npcs.forEach(npc => {
+    if (npc.dead || Math.abs(npc.x - state.x) > MAP_RADIUS || Math.abs(npc.z - state.z) > MAP_RADIUS) return
+    map.fillStyle = npc.kind === 'beagle' ? '#ff9f1a' : npc.kind === 'labradoodle' ? '#ffe28a' : npc.kind.startsWith('bald') ? '#ff4fd8' : npc.kind === 'speakerboy' ? '#ff2bd6' : npc.kind === 'zombie' ? '#39ff14' : '#4fd2ff'
     map.beginPath()
-    map.arc(walker.x, walker.z, 4, 0, Math.PI * 2)
+    map.arc(npc.x, npc.z, 4, 0, Math.PI * 2)
     map.fill()
   })
   map.restore()
@@ -1954,7 +1914,7 @@ await phase('prepare', prepareRoads)
 await phase('index', indexRoads)
 await buildWorld()
 const car = buildCar()
-await phase('walkers', buildWalkers)
+buildNpcMeshes()
 
 // SAMPLES (drop mp3/wav files in assets/sounds to replace the synthesized sounds):
 
@@ -2231,10 +2191,8 @@ function updateGroans(dt) {
   groanTimer -= dt
   if (groanTimer > 0) return
   groanTimer = 1.2 + random() * 2
-  const near = walkers.filter(walker => walker.kind === 'zombie' && !walker.dead && Math.hypot(walker.x - state.x, walker.z - state.z) < 45)
-  if (!near.length) return
-  const zombie = near[Math.floor(random() * near.length)]
-  const level = Math.max(0, 1 - Math.hypot(zombie.x - state.x, zombie.z - state.z) / 45) * 0.5
+  if (nearest.zombie > 45) return
+  const level = Math.max(0, 1 - nearest.zombie / 45) * 0.5
   const time = audio.currentTime, osc = audio.createOscillator(), wobble = audio.createOscillator(), depth = audio.createGain(), filter = audio.createBiquadFilter(), gain = audio.createGain()
   osc.type = 'sawtooth'
   osc.frequency.setValueAtTime(70 + random() * 30, time)
@@ -2310,9 +2268,7 @@ function updateBarks(dt) {
   barkTimer -= dt
   if (barkTimer > 0) return
   barkTimer = 1.5 + random() * 3
-  let nearest = Infinity
-  walkers.forEach(walker => { if (walker.kind === 'beagle' && !walker.dead) nearest = Math.min(nearest, Math.hypot(walker.x - state.x, walker.z - state.z)) })
-  if (nearest < 60) bark(nearest)
+  if (nearest.beagle < 60) bark(nearest.beagle)
 }
 
 async function curse(set) {
@@ -2331,9 +2287,7 @@ async function curse(set) {
 
 function updateHardstyle() {
   if (!hardstyle) return
-  let nearest = Infinity
-  walkers.forEach(walker => { if (walker.kind === 'speakerboy' && !walker.dead) nearest = Math.min(nearest, Math.hypot(walker.x - state.x, walker.z - state.z)) })
-  const level = Math.max(0, 1 - nearest / 80) ** 2 * 0.45
+  const level = Math.max(0, 1 - nearest.speakerboy / 80) ** 2 * 0.45
   hardstyle.gain.setTargetAtTime(level, audio.currentTime, 0.2)
 }
 
@@ -2413,10 +2367,12 @@ function toggleBigMap(open = bigmap.hidden) {
 const nameInput = document.getElementById('player-name')
 const playersEl = document.getElementById('players')
 const others = new Map()
-let socket, lastSent = 0
+const hintEl = document.getElementById('hint'), HINT = hintEl.textContent
+let socket, lastSent = 0, myId = null, serverOffset = 0, KIND_NAMES = Object.keys(KINDS)
 const myName = () => (nameInput.value || '').trim().slice(0, 16) || 'Panda'
+const localTime = serverTime => (serverTime - serverOffset) * 1000
 nameInput.addEventListener('keydown', event => { if (event.code === 'Enter' || event.code === 'Escape') nameInput.blur(); event.stopPropagation() })
-nameInput.addEventListener('change', () => { localStorage.setItem('playerName', myName()); renderPlayers() })
+nameInput.addEventListener('change', () => { localStorage.setItem('playerName', myName()); send({ name: myName() }); renderPlayers() })
 
 function nameLabel(text) {
   const canvas = document.createElement('canvas')
@@ -2441,49 +2397,105 @@ function send(message) {
   if (socket && socket.readyState === 1) socket.send(JSON.stringify(message))
 }
 
-function connectMultiplayer() {
-  localStorage.setItem('playerName', myName())
-  try {
-    socket = new WebSocket(`ws://${location.host}`)
-  } catch { return }
-  socket.onmessage = ({ data }) => {
-    const message = JSON.parse(data)
-    if (message.you !== undefined) return
-    if (message.kill !== undefined) return remoteKill(message)
-    if (message.poop) return dropPoop(message.poop[0], message.poop[1], true)
-    if (message.gone) {
-      const other = others.get(message.id)
-      if (other) { scene.remove(other.group); others.delete(message.id) }
-      renderPlayers()
-      return
+function connect() {
+  return new Promise(resolve => {
+    const attempt = () => {
+      socket = new WebSocket(`ws://${location.host}`)
+      socket.onopen = () => send({ join: { name: myName(), world: WORLD } })
+      socket.onmessage = ({ data }) => {
+        const message = JSON.parse(data)
+        if (message.welcome) { welcome(message.welcome); resolve() }
+        else if (message.error) console.error(`server: ${message.error}`)
+        else applyFrame(message)
+      }
+      socket.onclose = () => { socket = null; resetWorld(); hintEl.textContent = 'Verbinding met server verbroken, opnieuw verbinden…'; setTimeout(attempt, 2000) }
+      socket.onerror = () => socket && socket.close()
     }
-    let other = others.get(message.id)
+    attempt()
+  })
+}
+
+function welcome(data) {
+  myId = data.id
+  serverOffset = data.t - performance.now() / 1000
+  KIND_NAMES = data.kinds
+  showScore(data.score)
+  data.poops.forEach(addPoop)
+  hintEl.textContent = HINT
+}
+
+function resetWorld() {
+  ;[...npcs.keys()].forEach(removeNpc)
+  ;[...poops.keys()].forEach(removePoop)
+  others.forEach(other => scene.remove(other.group))
+  others.clear()
+  renderPlayers()
+}
+
+function applyFrame(frame) {
+  if (frame.npcs || frame.gone) applySnapshot(frame)
+  if (frame.players) applyPlayers(frame.players)
+  ;(frame.events || []).forEach(([type, ...args]) => EVENTS[type]?.(...args))
+}
+
+function applyPlayers(rows) {
+  const seen = new Set()
+  let changed = false
+  rows.forEach(([id, name, x, z, heading, speed, playerScore]) => {
+    seen.add(id)
+    if (id === myId) { if (playerScore !== score) showScore(playerScore); return }
+    let other = others.get(id)
     if (!other) {
-      const hue = [...String(message.name)].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 360
-        const group = pandaModel(new THREE.Color().setHSL(hue / 360, 0.6, 0.55).getHex())
-        const label = nameLabel(message.name)
-        group.add(label)
-        group.position.set(message.x, terrainHeight(message.x, message.z), message.z)
-        scene.add(group)
-        other = { group, label, name: message.name, score: 0, target: { x: message.x, z: message.z, heading: message.heading } }
-        others.set(message.id, other)
-      }
-      if (other.name !== message.name) {
-        other.group.remove(other.label)
-        other.label = nameLabel(message.name)
-        other.group.add(other.label)
-      }
-      if (other.name !== message.name || other.score !== message.score) { other.name = message.name; other.score = message.score || 0; renderPlayers() }
-      other.target = { x: message.x, z: message.z, heading: message.heading }
-      other.speed = message.speed
+      const hue = [...String(name)].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 360
+      const group = pandaModel(new THREE.Color().setHSL(hue / 360, 0.6, 0.55).getHex())
+      const label = nameLabel(name)
+      group.add(label)
+      group.position.set(x, terrainHeight(x, z), z)
+      scene.add(group)
+      other = { group, label, name, score: playerScore, target: { x, z, heading } }
+      others.set(id, other)
+      changed = true
+    }
+    if (other.name !== name) { other.group.remove(other.label); other.label = nameLabel(name); other.group.add(other.label) }
+    if (other.name !== name || other.score !== playerScore) { other.name = name; other.score = playerScore; changed = true }
+    other.target = { x, z, heading }
+    other.speed = speed
+  })
+  others.forEach((other, id) => { if (!seen.has(id)) { scene.remove(other.group); others.delete(id); changed = true } })
+  if (changed) renderPlayers()
+}
+
+const EVENTS = {
+  kill(id, by) {
+    const npc = npcs.get(id)
+    if (!npc) return
+    if (by !== myId) markDead(npc)
+    else if (npc.predictedAt) delete npc.predictedAt
+    else killEffects(npc)
+  },
+  combo(id, by, stage) {
+    if (by !== myId) return
+    state.blood = 45
+    state.bloodAt = [state.x, state.z]
+    streetEl.textContent = stage === 1 ? 'Achteruit over de uitlater: +½ coin' : 'En nog eens vooruit: +½ coin'
+  },
+  boom(player, id) {
+    if (player !== myId) return
+    explode(KINDS[npcs.get(id)?.kind]?.label || 'Beagle')
+    explosion.confirmed = true
+  },
+  respawn(player) { if (player === myId) respawn() },
+  score(player, value) { if (player === myId) showScore(value) },
+  poop(...row) { addPoop(row) },
+  unpoop(id, by) {
+    if (by === myId && poops.has(id)) stepInPoop()
+    removePoop(id)
   }
-  socket.onclose = () => { socket = null; setTimeout(connectMultiplayer, 3000) }
-  socket.onerror = () => socket && socket.close()
 }
 
 function renderPlayers() {
   const row = (name, score, me) => `<div${me ? ' class="me" title="Klik om je naam te wijzigen"' : ''}>${name}${score ? ` <small>${score.toLocaleString('nl-NL')} coins</small>` : ''}</div>`
-  playersEl.innerHTML = row(myName(), gpunten, true) + [...others.values()].map(other => row(other.name, other.score, false)).join('')
+  playersEl.innerHTML = row(myName(), score, true) + [...others.values()].sort((a, b) => b.score - a.score).map(other => row(other.name, other.score, false)).join('')
 }
 
 playersEl.addEventListener('click', event => {
@@ -2492,14 +2504,18 @@ playersEl.addEventListener('click', event => {
   if (name === null) return
   nameInput.value = name.trim().slice(0, 16) || 'Panda'
   localStorage.setItem('playerName', myName())
+  send({ name: myName() })
   renderPlayers()
 })
 
+function sendPos(now, force = false) {
+  if (!force && now - lastSent < 100) return
+  lastSent = now
+  send({ pos: [+state.x.toFixed(2), +state.z.toFixed(2), +state.heading.toFixed(3), +state.speed.toFixed(1)] })
+}
+
 function updateMultiplayer(dt, now) {
-  if (socket && socket.readyState === 1 && now - lastSent > 100) {
-    lastSent = now
-    socket.send(JSON.stringify({ name: myName(), score: gpunten, x: +state.x.toFixed(2), z: +state.z.toFixed(2), heading: +state.heading.toFixed(3), speed: +state.speed.toFixed(1) }))
-  }
+  sendPos(now)
   others.forEach(other => {
     const { group, target } = other
     group.position.x += (target.x - group.position.x) * Math.min(1, dt * 8)
@@ -2559,7 +2575,7 @@ function travelTo(name) {
 travelList.addEventListener('click', event => { const item = event.target.closest('li'); if (item) travelTo(item.dataset.name) })
 
 const keys = new Set()
-window.debug = { keys, walkers, travelTo, dropPoop, poops, SIGNS, signs, camera, scene, MATERIALS, respawn, others, unstick, remoteKill, get explosion() { return explosion }, get audio() { return audio }, get metal() { return metal }, get state() { return state } }
+window.debug = { keys, npcs, poops, others, travelTo, SIGNS, signs, camera, scene, MATERIALS, respawn, unstick, applySnapshot, applyFrame, EVENTS, get socket() { return socket }, get myId() { return myId }, get explosion() { return explosion }, get audio() { return audio }, get metal() { return metal }, get state() { return state } }
 addEventListener('keydown', event => {
   if (event.code === 'Escape' && !travel.hidden) return toggleTravel(false)
   if (event.code === 'Escape' && !/INPUT|TEXTAREA/.test(event.target.tagName)) return toggleBigMap()
@@ -2699,7 +2715,7 @@ function step(dt, now) {
     streetEl.textContent = streetName(state.x, state.z)
   }
   streamRoadTiles(2, 1)
-  updateWalkers(dt, now)
+  updateNpcs(dt, now)
   pickUpPoop()
   pooTrail(now)
   updateInfection(now)
@@ -2746,7 +2762,7 @@ console.info(`ready: ${Math.round(performance.now())} ms`)
 clearInterval(slideTimer)
 stopMetal()
 nameInput.blur()
-connectMultiplayer()
+await phase('server', connect)
 renderPlayers()
 loadingEl.classList.add('done')
 setTimeout(() => loadingEl.remove(), 900)

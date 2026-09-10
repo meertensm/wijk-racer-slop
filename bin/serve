@@ -2,6 +2,13 @@
 $stdout.sync = true
 root = File.expand_path('..', __dir__)
 Dir.chdir(root)
-%w[http_request static web_socket client game server].each { |file| require "#{root}/server/#{file}" }
+%w[
+  geometry grid entity entities/structure entities/road entities/plant entities/vehicle entities/zone entities/spot entities/place entities/poop
+  world npc npcs/humanoid_npc npcs/beagle npcs/labradoodle npcs/dog_walker npcs/bald_man npcs/zwerver npcs/junkie npcs/zombie npcs/speakerboy npcs/tattoo_man
+  population player scores game http_request static web_socket client server
+].each { |file| require "#{root}/server/#{file}" }
 
-Server.new(Integer(ARGV[0] || 8765), Game.new, root).run
+world = World.load(ARGV[1] || 'sittard-geleen')
+npcs  = Population.new(world).build
+puts "#{world.name}: #{npcs.length} npcs"
+Server.new(Integer(ARGV[0] || 8765), Game.new(world, npcs, Scores.new('data/scores.json')), root).run
