@@ -1452,6 +1452,7 @@ function updateNpcs(dt, now) {
       npc.z += (gz - npc.z) * k
       npc.heading += Math.atan2(Math.sin(npc.th - npc.heading), Math.cos(npc.th - npc.heading)) * k
       placeNpc(npc, npc.speed ? Math.abs(Math.sin(now / 1000 * 12)) * KINDS[npc.kind].bob : 0)
+      if (npc.talking && npc.talking.gain) npc.talking.gain.gain.setTargetAtTime(voiceLevel(npc), audio.currentTime, 0.1)
     }
     if (npc.dead) return
     const distance = Math.hypot(npc.x - state.x, npc.z - state.z)
@@ -2288,7 +2289,7 @@ async function speak(npc, index) {
   const lines = VOICES.npcs[npc.kind]?.[mood] || []
   if (!lines[index]) return
   hush(npc)
-  const track = await playSample(`voice-${npc.kind}-${gender}-${mood}-${index + 1}`, { level: 1.2 })
+  const track = await playSample(`voice-${npc.kind}-${gender}-${mood}-${index + 1}`, { level: voiceLevel(npc) })
   if (npc.dead) return track && track.source.stop()
   if (track) {
     npc.talking = track
@@ -2302,11 +2303,13 @@ async function speak(npc, index) {
   line.lang = 'nl-NL'
   line.rate = mood === 'angry' ? 1.2 + Math.random() * 0.15 : 1
   line.pitch = (gender === 'female' ? 1.3 : npc.kind === 'speakerboy' ? 1.6 : 0.7) + (mood === 'happy' ? 0.2 : 0)
-  line.volume = 1
+  line.volume = Math.min(1, voiceLevel(npc))
   const voice = speechSynthesis.getVoices().find(v => v.lang.startsWith('nl'))
   if (voice) line.voice = voice
   speechSynthesis.speak(line)
 }
+
+const voiceLevel = npc => Math.max(0, 1 - Math.hypot(npc.x - state.x, npc.z - state.z) / 60) ** 2 * 1.4
 
 function hush(npc) {
   const talking = npc.talking
