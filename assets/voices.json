@@ -1,6 +1,9 @@
 {
   "gerard": {
-    "voice": "nl-NL-MaartenNeural", "rate": "+25%", "pitch": "+10%", "volume": "+40%",
+    "voice": "nl-NL-MaartenNeural",
+    "rate": "+25%",
+    "pitch": "+10%",
+    "volume": "+40%",
     "lines": [
       "Godverdomme, kijk uit!",
       "Hé, klootzak!",
@@ -33,7 +36,10 @@
     ]
   },
   "godver": {
-    "voice": "nl-NL-MaartenNeural", "rate": "+15%", "pitch": "-5%", "volume": "+40%",
+    "voice": "nl-NL-MaartenNeural",
+    "rate": "+15%",
+    "pitch": "-5%",
+    "volume": "+40%",
     "lines": [
       "Godverdomme!",
       "Godverdegodver!",
@@ -49,7 +55,10 @@
     ]
   },
   "brabant": {
-    "voice": "nl-BE-ArnaudNeural", "rate": "+10%", "pitch": "-8%", "volume": "+40%",
+    "voice": "nl-BE-ArnaudNeural",
+    "rate": "+10%",
+    "pitch": "-8%",
+    "volume": "+40%",
     "lines": [
       "Godverdomme, wa doede gij nou!",
       "Kèk uit, kaoie mens!",
@@ -66,11 +75,44 @@
     ]
   },
   "scream": {
-    "file": "scream", "voice": "nl-NL-MaartenNeural", "rate": "-15%", "pitch": "+45%", "volume": "+50%",
-    "lines": ["Aaaaaaaah!", "Nee nee neeeee!", "Aaaargh!", "Ooooh, mijn beeeen!"]
+    "file": "scream",
+    "voice": "nl-NL-MaartenNeural",
+    "rate": "-15%",
+    "pitch": "+45%",
+    "volume": "+50%",
+    "lines": [
+      "Aaaaaaaah!",
+      "Nee nee neeeee!",
+      "Aaaargh!",
+      "Ooooh, mijn beeeen!"
+    ]
   },
   "zombie": {
-    "file": "zombie", "voice": "nl-NL-MaartenNeural", "rate": "-45%", "pitch": "-45%", "volume": "+30%",
-    "lines": ["Uuuuuuuhhhhh.", "Hersenen. Hersenen.", "Graaaaaauuuwww."]
+    "file": "zombie",
+    "voice": "nl-NL-MaartenNeural",
+    "rate": "-45%",
+    "pitch": "-45%",
+    "volume": "+30%",
+    "lines": [
+      "Uuuuuuuhhhhh.",
+      "Hersenen. Hersenen.",
+      "Graaaaaauuuwww."
+    ]
+  },
+  "speakerboy": {
+    "voice": "nl-NL-MaartenNeural",
+    "rate": "+30%",
+    "pitch": "+35%",
+    "volume": "+50%",
+    "lines": [
+      "Speakerboy!",
+      "Speakerbooooy!",
+      "SPEAKERBOY!",
+      "Speakerboy, jonguh!",
+      "Ik ben Speakerboy!",
+      "Speakerboy in de plaats!",
+      "Harder! Speakerboy!",
+      "Speakerboy, oh oh oh!"
+    ]
   }
 }

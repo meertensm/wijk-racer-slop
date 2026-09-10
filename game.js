@@ -8,8 +8,8 @@ const WORLD = new URLSearchParams(location.search).get('world') || 'sittard-gele
 // LOADING SCREEN:
 
 const TIPS = [
-  'Rij een niet poep oprapende labradoodle uitlater omver voor een G-Point.',
-  'Binnen 5 seconden achteruit en weer vooruit over hem heen: twee halve G-Points extra.',
+  'Rij een niet poep oprapende labradoodle uitlater omver voor een coin.',
+  'Binnen 5 seconden achteruit en weer vooruit over hem heen: twee halve coins extra.',
   'De labradoodle is onsterfelijk en rent weg. Beagles ook onsterfelijk, maar dan ontploft jouw Panda.',
   'In Einighausen lopen alleen kale mannetjes rond.',
   'Druk op T om naar een supermarkt, skatebaan of station te springen.',
@@ -21,7 +21,7 @@ let audio, hardstyle, nextBeat = 0, beat = 0, engine, engineGain, sfx, metal, me
 const RIFF = [[82.41, 1], [82.41, 1], [82.41, 0], [98, 1], [82.41, 1], [82.41, 0], [110, 1], [110, 1], [82.41, 1], [82.41, 0], [82.41, 1], [73.42, 1], [82.41, 1], [82.41, 0], [98, 1], [110, 1]]
 const NOTES = [220, 261.6, 329.6, 392, 329.6, 261.6, 220, 196]
 const VOICES = await fetch('assets/voices.json').then(response => response.json())
-let lastGodver = 0
+let lastGodver = 0, lastShout = 0
 addEventListener('keydown', () => startMetal(), { once: true })
 const loadingEl = document.getElementById('loading')
 const loadingBar = loadingEl.querySelector('#loading-bar i')
@@ -1469,6 +1469,7 @@ function updateWalkers(dt, now) {
     placeWalker(walker, walker.speed ? Math.abs(Math.sin(now / 1000 * 12)) * kind.bob : 0)
     const distance = Math.hypot(walker.x - state.x, walker.z - state.z)
     if (walker.kind.startsWith('bald') && distance < 12 && Math.abs(state.speed) > 6 && now - lastGodver > 6000) { lastGodver = now; curse(walker.kind === 'baldflag' ? 'brabant' : 'godver') }
+    if (walker.kind === 'speakerboy' && distance < 40 && now - lastShout > 9000) { lastShout = now; curse('speakerboy') }
     if (explosion || distance >= 1.6) return
     if (walker.kind === 'dogwalker') runOver(walker)
     else if (walker.kind === 'labradoodle') { if (!walker.owner.dead) runOver(walker.owner) }
@@ -1490,10 +1491,11 @@ function squash(walker, remote = false) {
   scene.add(splat)
   if (remote) return
   const reward = REWARD[walker.kind]
-  streetEl.textContent = `${KINDS[walker.kind].label} geplet: +${reward.toLocaleString('nl-NL')} G-Point`
+  streetEl.textContent = `${KINDS[walker.kind].label} geplet: +${reward.toLocaleString('nl-NL')} coin`
   thud(0.8)
   scream(walker.kind)
   if (walker.kind.startsWith('bald')) setTimeout(() => curse(walker.kind === 'baldflag' ? 'brabant' : 'godver'), 500)
+  if (walker.kind === 'speakerboy') curse('speakerboy')
   awardCoin(walker.x, walker.z, reward)
   dirty(0.12)
   send({ kill: walkers.indexOf(walker), x: +walker.x.toFixed(1), z: +walker.z.toFixed(1) })
@@ -1523,7 +1525,7 @@ function runOver(walker, remote = false) {
     send({ kill: walkers.indexOf(walker), x: +walker.x.toFixed(1), z: +walker.z.toFixed(1) })
     state.blood = 45
     state.bloodAt = [state.x, state.z]
-  streetEl.textContent = 'Niet poep oprapende labradoodle uitlater overreden: +1 G-Point'
+  streetEl.textContent = 'Niet poep oprapende labradoodle uitlater overreden: +1 coin'
   thud(1)
   scream('man')
   setTimeout(() => curse('gerard'), 700)
@@ -1594,7 +1596,7 @@ function combo(walker) {
   walker.deadAt = performance.now()
   state.blood = 45
   state.bloodAt = [state.x, state.z]
-  streetEl.textContent = walker.stage === 1 ? 'Achteruit over de uitlater: +½ G-Point' : 'En nog eens vooruit: +½ G-Point'
+  streetEl.textContent = walker.stage === 1 ? 'Achteruit over de uitlater: +½ coin' : 'En nog eens vooruit: +½ coin'
   awardCoin(walker.x, walker.z, 0.5)
 }
 
@@ -2320,7 +2322,7 @@ async function curse(set) {
   const line = new SpeechSynthesisUtterance(lines[index])
   line.lang = 'nl-NL'
   line.rate = 1.1 + Math.random() * 0.15
-  line.pitch = set === 'gerard' ? 0.8 : 0.6
+  line.pitch = set === 'speakerboy' ? 1.6 : set === 'gerard' ? 0.8 : 0.6
   line.volume = 1
   const voice = speechSynthesis.getVoices().find(v => v.lang.startsWith('nl'))
   if (voice) line.voice = voice
@@ -2480,7 +2482,7 @@ function connectMultiplayer() {
 }
 
 function renderPlayers() {
-  const row = (name, score, me) => `<div${me ? ' class="me" title="Klik om je naam te wijzigen"' : ''}>${name}${score ? ` <small>${score.toLocaleString('nl-NL')} G</small>` : ''}</div>`
+  const row = (name, score, me) => `<div${me ? ' class="me" title="Klik om je naam te wijzigen"' : ''}>${name}${score ? ` <small>${score.toLocaleString('nl-NL')} coins</small>` : ''}</div>`
   playersEl.innerHTML = row(myName(), gpunten, true) + [...others.values()].map(other => row(other.name, other.score, false)).join('')
 }
 
