@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import polygonClipping from 'polygon-clipping'
 
 const WORLD = new URLSearchParams(location.search).get('world') || 'sittard-geleen'
 
@@ -522,30 +523,6 @@ function onAnyAsphalt(x, z, margin) {
   return onOtherAsphalt(x, z, null, margin)
 }
 
-function junctionCorners(nodes, parts) {
-  nodes.forEach((roads, key) => {
-    const walkable = roads.filter(road => road.w >= 5 && road.w <= 8 && !road.elevated && !road.dual)
-    if (roads.length < 2 || !walkable.length) return
-    const [x, z] = key.split(',').map(Number)
-    const outer = Math.max(...roads.map(road => road.w)) / 2 + 1.55
-    const inner = Math.min(...roads.map(road => road.w)) / 2 - 0.3
-    const steps = 40, rings = 3
-    const acc = { positions: [], normals: [], colors: [] }
-    const at = (ring, step) => {
-      const radius = inner + (outer - inner) * ring / rings, angle = step / steps * Math.PI * 2
-      return [x + Math.cos(angle) * radius, z + Math.sin(angle) * radius]
-    }
-    for (let step = 0; step < steps; step++) for (let ring = 0; ring < rings; ring++) {
-      const corners = [at(ring, step), at(ring + 1, step), at(ring + 1, step + 1), at(ring, step + 1)]
-      if (corners.some(([px, pz]) => onAnyAsphalt(px, pz, 0.35))) continue
-      const [a, b, c, d] = corners.map(([px, pz]) => [px, terrainHeight(px, pz) + 0.26, pz])
-      acc.positions.push(...upward(a, b, c).flat(), ...upward(a, c, d).flat())
-      for (let k = 0; k < 6; k++) { acc.normals.push(0, 1, 0); acc.colors.push(COLORS.sidewalk.r, COLORS.sidewalk.g, COLORS.sidewalk.b) }
-    }
-    if (acc.positions.length) parts.push(flush(acc))
-  })
-}
-
 function onOtherAsphalt(x, z, road, margin) {
   const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL)
   for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
@@ -660,19 +637,7 @@ function buildRoads(groups) {
     } else if (road.kind === 'path') {
       strip(road, Math.min(road.w, 1.5), 0.12, COLORS.path, groups.paving)
     } else {
-      const ends = [road.p[0], road.p[road.p.length - 1]].map(point => point.join(','))
-      const capped = road.nodes.filter((node, i) => !ends.includes(road.p[i].join(',')) || nodes.get(road.p[i].join(',')).some(other => other !== road && other.w >= road.w))
-      strip(road, road.w, 0.22, COLORS.road, groups.asphalt, capped)
-      if (road.w >= 5 && road.w <= 8 && !road.elevated && !road.dual) {
-        splitWhere(points, ([x, z]) => onOtherAsphalt(x, z, road, 0.4)).forEach(walk => {
-          for (const side of [-1, 1]) {
-            const inner = band(walk, side * (road.w / 2 + 0.05), 1.5, 0.26, COLORS.sidewalk, groups.paving)
-            groups.plain.push(paint(skirt(inner, inner.map(([x, y, z]) => [x, y - 0.1, z])), COLORS.curb))
-            const outer = offsetLine(walk, side * (road.w / 2 + 1.55), 0.26)
-            groups.plain.push(paint(skirt(outer, outer.map(([x, , z]) => [x, terrainHeight(x, z) - 0.05, z])), COLORS.curb))
-          }
-        })
-      }
+      if (road.elevated || road.bridge) strip(road, road.w, 0.22, COLORS.road, groups.asphalt)
       if (road.w >= 7 || road.dual) {
             splitWhere(points, ([x, z]) => onOtherAsphalt(x, z, road, 2.5)).forEach(marks => {
                 if (!road.dual || road.w >= 9) dashes(marks, groups.plain)
@@ -683,8 +648,90 @@ function buildRoads(groups) {
             else if (road.elevated) embankment(points, road.w, groups.ground)
           }
         })
-        junctionCorners(nodes, groups.paving)
+          buildRoadPolygons(groups)
+        }
+
+function bufferRing(points, width) {
+  const sides = edges(points, width)
+  const left = sides.map(([l]) => [l[0], l[2]]), right = sides.map(([, r]) => [r[0], r[2]])
+  const cap = (center, from) => {
+    const start = Math.atan2(from[1] - center[1], from[0] - center[0]), radius = width / 2, arc = []
+    for (let k = 1; k < 8; k++) arc.push([center[0] + Math.cos(start - k / 8 * Math.PI) * radius, center[1] + Math.sin(start - k / 8 * Math.PI) * radius])
+    return arc
+  }
+  const last = points.length - 1
+  const ring = [...left, ...cap([points[last][0], points[last][1]], left[last]), ...right.reverse(), ...cap([points[0][0], points[0][1]], right[right.length - 1])]
+  ring.push(ring[0])
+  return ring
+}
+
+function polygonGeometry(rings, lift, color) {
+  const shape = new THREE.Shape(rings[0].map(([x, z]) => new THREE.Vector2(x, -z)))
+  rings.slice(1).forEach(hole => shape.holes.push(new THREE.Path(hole.map(([x, z]) => new THREE.Vector2(x, -z)))))
+  const base = new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2)
+  const source = base.attributes.position.array, index = base.index.array
+  const stack = []
+  for (let i = 0; i < index.length; i += 3) stack.push([0, 1, 2].map(k => [source[index[i + k] * 3], source[index[i + k] * 3 + 2]]))
+  const positions = [], normals = [], colors = []
+  while (stack.length) {
+    const [a, b, c] = stack.pop()
+    const lengths = [Math.hypot(b[0] - a[0], b[1] - a[1]), Math.hypot(c[0] - b[0], c[1] - b[1]), Math.hypot(a[0] - c[0], a[1] - c[1])]
+    const longest = lengths.indexOf(Math.max(...lengths))
+    if (lengths[longest] > 7) {
+      const [p, q, r] = [[a, b, c], [b, c, a], [c, a, b]][longest]
+      const m = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]
+      stack.push([p, m, r], [m, q, r])
+      continue
+    }
+    const tri = upward([a[0], 0, a[1]], [b[0], 0, b[1]], [c[0], 0, c[1]])
+    tri.forEach(([x, , z]) => { positions.push(x, terrainHeight(x, z) + lift, z); normals.push(0, 1, 0); colors.push(color.r, color.g, color.b) })
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+  return geometry
+}
+
+function curb(ring, top, bottom, parts) {
+  const upper = ring.map(([x, z]) => [x, terrainHeight(x, z) + top, z]), lower = ring.map(([x, z]) => [x, terrainHeight(x, z) + bottom, z])
+  parts.push(paint(skirt(upper, lower), COLORS.curb))
+}
+
+function buildRoadPolygons(groups) {
+  const tiles = new Map()
+  world.roads.filter(road => road.kind === 'road' && !road.elevated && !road.bridge).forEach(road => {
+    road.asphalt = [bufferRing(road.samples, road.w)]
+    road.walkway = road.w >= 5 && road.w <= 8 && !road.dual ? [bufferRing(road.samples, road.w + 3.1)] : null
+    const xs = road.samples.map(p => p[0]), zs = road.samples.map(p => p[1])
+    const margin = road.w / 2 + 2
+    for (let tx = Math.floor((Math.min(...xs) - margin) / TILE); tx <= Math.floor((Math.max(...xs) + margin) / TILE); tx++)
+      for (let tz = Math.floor((Math.min(...zs) - margin) / TILE); tz <= Math.floor((Math.max(...zs) + margin) / TILE); tz++) {
+        const key = `${tx},${tz}`
+        if (!tiles.has(key)) tiles.set(key, [])
+        tiles.get(key).push(road)
       }
+  })
+  tiles.forEach((roads, key) => {
+    const [tx, tz] = key.split(',').map(Number)
+    const box = [[[tx * TILE, tz * TILE], [(tx + 1) * TILE, tz * TILE], [(tx + 1) * TILE, (tz + 1) * TILE], [tx * TILE, (tz + 1) * TILE], [tx * TILE, tz * TILE]]]
+    let asphalt, walkways
+    try {
+      asphalt = polygonClipping.union(...roads.map(road => road.asphalt))
+      const walks = roads.filter(road => road.walkway).map(road => road.walkway)
+      walkways = walks.length ? polygonClipping.difference(polygonClipping.intersection(polygonClipping.union(...walks), box), asphalt) : []
+      asphalt = polygonClipping.intersection(asphalt, box)
+    } catch (error) {
+      console.warn('road polygons failed for tile', key, error)
+      return
+    }
+    asphalt.forEach(polygon => groups.asphalt.push(polygonGeometry(polygon, 0.22, COLORS.road)))
+    walkways.forEach(polygon => {
+      groups.paving.push(polygonGeometry(polygon, 0.3, COLORS.sidewalk))
+      polygon.forEach(ring => curb(ring, 0.3, 0.16, groups.plain))
+    })
+  })
+}
 
 function bridge(points, width, parts) {
   const sides = edges(points, width + 1)
@@ -861,7 +908,8 @@ function buildGround() {
     for (let i = 0; i < position.count; i++) {
       const x = position.getX(i), z = position.getZ(i)
       position.setY(i, terrainHeight(x, z))
-      const color = COLORS[kindAt(x, z)]
+      const kind = kindAt(x, z)
+      const color = wasteAt(x, z) && kind !== 'water' && kind !== 'parking' ? COLORS[kind].clone().lerp(DEAD, 0.75) : COLORS[kind]
       colors.set([color.r, color.g, color.b], i * 3)
     }
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
@@ -930,8 +978,12 @@ function instances(geometry, color, placements, map, variation = 0, tiled = true
 
 function buildTrees() {
   const placements = world.trees.map(([x, z]) => [x, terrainHeight(x, z) - 0.1, z, 0.8 + ((x * 7 + z * 13) % 10) / 20, 0])
-  const conifers = placements.filter(([x, , z]) => (Math.abs(x * 3 + z * 5) | 0) % 4 === 0)
-  const leafy = placements.filter(p => !conifers.includes(p))
+  const dead = placements.filter(([x, , z]) => wasteAt(x, z))
+  const alive = placements.filter(p => !dead.includes(p))
+  const conifers = alive.filter(([x, , z]) => (Math.abs(x * 3 + z * 5) | 0) % 4 === 0)
+  const leafy = alive.filter(p => !conifers.includes(p))
+  instances(new THREE.CylinderGeometry(0.12, 0.3, 3.2, 5).translate(0, 1.6, 0), 0x4a4038, dead)
+  instances(new THREE.CylinderGeometry(0.05, 0.1, 1.6, 4).rotateZ(0.7).translate(0.4, 3.1, 0), 0x4a4038, dead)
   instances(new THREE.CylinderGeometry(0.25, 0.35, 2, 6).translate(0, 1, 0), 0x7a5230, leafy)
   instances(new THREE.IcosahedronGeometry(1.8, 1).translate(0, 3.4, 0), 0xffffff, leafy, TEXTURES.foliage, 0.1)
   instances(new THREE.CylinderGeometry(0.2, 0.3, 1.5, 6).translate(0, 0.75, 0), 0x5a3d25, conifers)
@@ -1035,16 +1087,48 @@ function beagleGeometry() {
   return merged(parts)
 }
 
-function man(parts, hair, shirt) {
-  const skin = 0xe8b894
+function man(parts, hair, shirt, skin = 0xe8b894, trousers = 0x2f3a4a) {
   for (const side of [-1, 1]) {
-    box(parts, 0.16, 0.8, 0.2, 0x2f3a4a, side * 0.1, 0.4, 0)
+    box(parts, 0.16, 0.8, 0.2, trousers, side * 0.1, 0.4, 0)
     box(parts, 0.12, 0.6, 0.14, shirt, side * 0.27, 1.12, 0)
     box(parts, 0.1, 0.12, 0.12, skin, side * 0.27, 0.78, 0)
   }
   box(parts, 0.4, 0.6, 0.24, shirt, 0, 1.1, 0)
   box(parts, 0.22, 0.26, 0.24, skin, 0, 1.55, 0)
   if (hair) box(parts, 0.23, 0.07, 0.25, 0x3a2a1a, 0, 1.71, 0)
+}
+
+function zwerverGeometry() {
+  const parts = []
+  man(parts, false, 0x5a4634, 0xd9b18f, 0x3d3a33)
+  box(parts, 0.5, 0.5, 0.3, 0x4a3a2c, 0, 1.0, 0)
+  box(parts, 0.25, 0.14, 0.27, 0x777777, 0, 1.7, 0)
+  box(parts, 0.22, 0.12, 0.06, 0x8a7a66, 0, 1.44, 0.12)
+  box(parts, 0.3, 0.4, 0.2, 0x7a6a4a, -0.4, 0.55, 0.1)
+  return merged(parts)
+}
+
+function zombieGeometry() {
+  const parts = []
+  for (const side of [-1, 1]) {
+    box(parts, 0.16, 0.8, 0.2, 0x3a3f3a, side * 0.1, 0.4, 0)
+    box(parts, 0.12, 0.14, 0.6, 0x7a9a5a, side * 0.27, 1.3, 0.3)
+    box(parts, 0.1, 0.12, 0.12, 0x7a9a5a, side * 0.27, 1.3, 0.62)
+  }
+  box(parts, 0.4, 0.6, 0.24, 0x4a5a4a, 0, 1.1, 0)
+  box(parts, 0.22, 0.26, 0.24, 0x7a9a5a, 0, 1.52, 0.05, 0.25)
+  box(parts, 0.05, 0.05, 0.05, 0xff2a2a, -0.06, 1.56, 0.17)
+  box(parts, 0.05, 0.05, 0.05, 0xff2a2a, 0.06, 1.56, 0.17)
+  return merged(parts)
+}
+
+function junkieGeometry() {
+  const parts = []
+  man(parts, false, 0x2b2b30, 0xd8c8c0, 0x1f2430)
+  box(parts, 0.3, 0.3, 0.3, 0x2b2b30, 0, 1.58, -0.03)
+  box(parts, 0.12, 0.28, 0.3, 0x333338, 0, 1.15, 0)
+  box(parts, 0.08, 0.05, 0.03, 0xf0e6d0, 0.32, 0.8, 0.08)
+  return merged(parts)
 }
 
 function baldManGeometry() {
@@ -1097,7 +1181,10 @@ const KINDS = {
   baldman:   { geometry: baldManGeometry,   label: 'Kale man',            bob: 0.03, speed: () => random() < 0.3 ? 0 : 0.8 + random() * 0.6 },
   dogwalker:   { geometry: dogWalkerGeometry,   label: 'Niet poep oprapende labradoodle uitlater', bob: 0.03, speed: () => random() < 0.35 ? 0 : 0.7 + random() * 0.5 },
   labradoodle: { geometry: labradoodleGeometry, label: 'Labradoodle',         bob: 0.08, speed: () => 0 },
-  tattooman:   { geometry: tattooManGeometry,   label: 'Getatoeëerde kale man', bob: 0, speed: () => 0 }
+  tattooman:   { geometry: tattooManGeometry,   label: 'Getatoeëerde kale man', bob: 0, speed: () => 0 },
+  zwerver:     { geometry: zwerverGeometry,     label: 'Zwerver',               bob: 0.02, speed: () => random() < 0.6 ? 0 : 0.3 + random() * 0.3 },
+  zombie:      { geometry: zombieGeometry,      label: 'Zombie',                bob: 0.06, speed: () => 0.6 },
+  junkie:      { geometry: junkieGeometry,      label: 'Junk',                  bob: 0.05, speed: () => random() < 0.2 ? 0 : 1.6 + random() * 1.2 }
 }
 
 const walkerMeshes = {}
@@ -1123,7 +1210,8 @@ function buildWalkers() {
 
   chosen.forEach(([x, z]) => {
     const zone = zoneOf([x, z])
-    const kind = zone ? zone.kind : random() < 0.17 ? 'dogwalker' : 'beagle'
+    const kinds = zone ? zone.kind.split(',') : null
+    const kind = kinds ? kinds[Math.floor(random() * kinds.length)] : random() < 0.17 ? 'dogwalker' : 'beagle'
     const heading = random() * Math.PI * 2
     const walker = { kind, x, z, home: [x, z], heading, speed: 0, timer: 0 }
     walkers.push(walker)
@@ -1177,6 +1265,12 @@ function updateWalkers(dt, now) {
       walker.timer = 0.8 + random()
     } else if (walker.timer < 0) {
       walker.speed = kind.speed()
+      if (walker.kind === 'zombie' && Math.hypot(walker.x - state.x, walker.z - state.z) < 70) {
+        walker.heading = Math.atan2(state.x - walker.x, state.z - walker.z) + (random() - 0.5) * 0.4
+        walker.timer = 0.6
+        return
+      }
+      if (walker.kind === 'junkie') walker.timer = 0.4 + random() * 0.8
       if (walker.kind === 'dogwalker' && !walker.speed && walker.dog && random() < 0.5 && now - (walker.pooped || 0) > 45000) { walker.pooped = now; dropPoop(walker.dog.x, walker.dog.z) }
       if (walker.speed) {
         const far = Math.hypot(walker.home[0] - walker.x, walker.home[1] - walker.z) > (walker.kind === 'dogwalker' ? 150 : 40)
@@ -1575,6 +1669,15 @@ index(world.buildings, building => {
   const xs = building.p.map(p => p[0]), zs = building.p.map(p => p[1])
   return [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)]
 })
+const waste = new Uint8Array(T.cols * T.rows)
+;(world.zones || []).filter(zone => zone.kind.includes('zombie')).forEach(zone => {
+  const xs = zone.p.map(p => p[0]), zs = zone.p.map(p => p[1])
+  const c0 = clamp(Math.floor((Math.min(...xs) - T.x0) / T.sx), 0, T.cols - 1), c1 = clamp(Math.ceil((Math.max(...xs) - T.x0) / T.sx), 0, T.cols - 1)
+  const r0 = clamp(Math.floor((Math.min(...zs) - T.z0) / T.sz), 0, T.rows - 1), r1 = clamp(Math.ceil((Math.max(...zs) - T.z0) / T.sz), 0, T.rows - 1)
+  for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (inside(zone.p, T.x0 + c * T.sx, T.z0 + r * T.sz)) waste[r * T.cols + c] = 1
+})
+const wasteAt = (x, z) => waste[clamp(Math.round((z - T.z0) / T.sz), 0, T.rows - 1) * T.cols + clamp(Math.round((x - T.x0) / T.sx), 0, T.cols - 1)] === 1
+const DEAD = new THREE.Color(0x8a7f66)
 await phase('terrain', () => { smoothTerrain(); digWater() })
 await phase('stamp', stampRoads)
 await phase('prepare', prepareRoads)
