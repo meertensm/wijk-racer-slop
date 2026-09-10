@@ -43,7 +43,7 @@ const LABELS = { fetch: 'Kaart ophalen', terrain: 'Terrein boetseren', stamp: 'W
 
 async function phase(name, fn) {
   loadingPhase.textContent = LABELS[name] + '…'
-  await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 16)))
+  await new Promise(resolve => setTimeout(resolve, 20))
   const started = performance.now()
   await fn()
   progress += PHASES[name]
@@ -114,7 +114,7 @@ gradient.minFilter = gradient.magFilter = THREE.NearestFilter
 gradient.needsUpdate = true
 // POOP INFECTION:
 
-const POOP_SLOTS = 16
+const POOP_SLOTS = 48
 const poopUniform = { value: Array.from({ length: POOP_SLOTS }, () => new THREE.Vector4()) }
 
 function infectable(material) {
@@ -1312,16 +1312,87 @@ const poopMaterial = solid(0x4a2e12)
 function dropPoop(x, z) {
   const mesh = new THREE.Mesh(poopGeometry, poopMaterial)
   mesh.position.set(x, groundHeight(x, z), z)
-    scene.add(mesh)
-    poops.push({ x, z, y: mesh.position.y, born: performance.now(), mesh })
-    if (poops.length > 120) scene.remove(poops.shift().mesh)
-  }
+  scene.add(mesh)
+  poops.push({ x, z, y: mesh.position.y, born: performance.now(), mesh })
+  if (poops.length > 120) scene.remove(poops.shift().mesh)
+}
 
-function updatePoops(now) {
-  const nearest = poops.map(poop => ({ poop, distance: Math.hypot(poop.x - state.x, poop.z - state.z) })).sort((a, b) => a.distance - b.distance).slice(0, POOP_SLOTS)
+const PUFFS = 200
+const puffMaterial = new THREE.MeshBasicMaterial({ color: 0x7dff2a, transparent: true, opacity: 0.5, depthWrite: false })
+puffMaterial.userData.outlineParameters = { visible: false }
+const puffMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.5, 1), puffMaterial, PUFFS)
+puffMesh.frustumCulled = false
+scene.add(puffMesh)
+const puffs = []
+const puffDummy = new THREE.Object3D()
+let puffTimer = 0
+
+function updatePuffs(dt, now) {
+  puffTimer -= dt
+  if (puffTimer < 0) {
+    puffTimer = 0.25
+    poops.forEach(poop => {
+      if (Math.hypot(poop.x - state.x, poop.z - state.z) < 160 && random() < 0.5 && puffs.length < PUFFS) {
+        puffs.push({ x: poop.x + (random() - 0.5) * 0.4, y: groundHeight(poop.x, poop.z) + 0.3, z: poop.z + (random() - 0.5) * 0.4, drift: (random() - 0.5) * 0.3, born: now })
+      }
+    })
+  }
+  for (let i = puffs.length - 1; i >= 0; i--) if (now - puffs[i].born > 2600) puffs.splice(i, 1)
+  puffs.forEach((puff, i) => {
+    const age = (now - puff.born) / 2600
+    puffDummy.position.set(puff.x + puff.drift * age * 2, puff.y + age * 2.2, puff.z + Math.sin(age * 6 + i) * 0.15)
+    puffDummy.scale.setScalar(0.25 + age * 0.9 * (1 - age * 0.5))
+    puffDummy.updateMatrix()
+    puffMesh.setMatrixAt(i, puffDummy.matrix)
+  })
+  puffMesh.count = puffs.length
+  puffMesh.instanceMatrix.needsUpdate = true
+}
+
+const SMEAR_LIFE = 60000
+const smears = []
+const poo = new THREE.MeshBasicMaterial({ color: 0x6b4a1e, transparent: true, opacity: 0.85 })
+poo.userData.outlineParameters = { visible: false }
+
+function pickUpPoop() {
+  const index = poops.findIndex(poop => Math.hypot(poop.x - state.x, poop.z - state.z) < 1.4)
+  if (index < 0) return
+  scene.remove(poops[index].mesh)
+  poops.splice(index, 1)
+  state.poo = 45
+  state.pooAt = [state.x, state.z]
+  streetEl.textContent = 'Door de drol gereden'
+}
+
+function pooTrail(now) {
+  if (!(state.poo > 0)) return
+  const travelled = Math.hypot(state.x - state.pooAt[0], state.z - state.pooAt[1])
+  if (travelled < 1.2) return
+  state.pooAt = [state.x, state.z]
+  state.poo -= travelled
+  const material = poo.clone()
+  for (const side of [-1, 1]) {
+    const x = state.x + Math.cos(state.heading) * side * 0.66 - Math.sin(state.heading) * 1.1
+    const z = state.z - Math.sin(state.heading) * side * 0.66 - Math.cos(state.heading) * 1.1
+    const smear = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 1.5).rotateX(-Math.PI / 2), material)
+    smear.position.set(x, groundHeight(x, z) + 0.23, z)
+    smear.rotation.y = state.heading
+    scene.add(smear)
+    smears.push({ mesh: smear, x, z, y: smear.position.y, born: now })
+  }
+}
+
+function updateInfection(now) {
+  while (smears.length && now - smears[0].born > SMEAR_LIFE) scene.remove(smears.shift().mesh)
+  smears.forEach(smear => { smear.mesh.material.opacity = 0.85 * (1 - (now - smear.born) / SMEAR_LIFE) })
+  const sources = [
+    ...smears.map(smear => ({ x: smear.x, y: smear.y, z: smear.z, radius: 2 * (1 - (now - smear.born) / SMEAR_LIFE) })),
+    ...poops.map(poop => ({ x: poop.x, y: poop.y, z: poop.z, radius: Math.min(30, (now - poop.born) / 1000 * 0.4) }))
+  ]
+  const nearest = sources.map(source => ({ source, distance: Math.hypot(source.x - state.x, source.z - state.z) - source.radius })).sort((a, b) => a.distance - b.distance).slice(0, POOP_SLOTS)
   poopUniform.value.forEach((slot, i) => {
     const entry = nearest[i]
-    if (entry) slot.set(entry.poop.x, entry.poop.y, entry.poop.z, Math.min(60, (now - entry.poop.born) / 1000 * 0.7))
+    if (entry) slot.set(entry.source.x, entry.source.y, entry.source.z, entry.source.radius)
     else slot.set(0, 0, 0, 0)
   })
 }
@@ -1652,7 +1723,10 @@ function step(dt, now) {
     streetEl.textContent = streetName(state.x, state.z)
   }
   updateWalkers(dt, now)
-  updatePoops(now)
+  pickUpPoop()
+  pooTrail(now)
+  updateInfection(now)
+  updatePuffs(dt, now)
   bloodTrail()
       updateCoins(dt)
       updateTown(dt)
