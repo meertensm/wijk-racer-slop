@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 
-const WORLD = new URLSearchParams(location.search).get('world') || 'geleen'
+const WORLD = new URLSearchParams(location.search).get('world') || 'sittard-geleen'
 const world = await fetch(`worlds/${WORLD}.json`, { cache: 'no-store' }).then(response => response.json())
 
 const COLORS = {
@@ -137,11 +137,24 @@ function uvWorld(geometry) {
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
 
+function smoothTerrain() {
+  const source = T.heights.slice()
+  const at = (c, r) => source[clamp(r, 0, T.rows - 1) * T.cols + clamp(c, 0, T.cols - 1)]
+  for (let r = 0; r < T.rows; r++) for (let c = 0; c < T.cols; c++) {
+    let sum = 0
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) sum += at(c + dc, r + dr)
+    T.heights[r * T.cols + c] = sum / 9
+  }
+}
+
+const cubic = (p0, p1, p2, p3, t) => p1 + 0.5 * t * (p2 - p0 + t * (2 * p0 - 5 * p1 + 4 * p2 - p3 + t * (3 * (p1 - p2) + p3 - p0)))
+
 function terrainHeight(x, z) {
   const gx = clamp((x - T.x0) / T.sx, 0, T.cols - 1.001), gz = clamp((z - T.z0) / T.sz, 0, T.rows - 1.001)
   const i = Math.floor(gx), j = Math.floor(gz), fx = gx - i, fz = gz - j
-  const h = (c, r) => T.heights[r * T.cols + c]
-  return (h(i, j) * (1 - fx) + h(i + 1, j) * fx) * (1 - fz) + (h(i, j + 1) * (1 - fx) + h(i + 1, j + 1) * fx) * fz
+  const h = (c, r) => T.heights[clamp(r, 0, T.rows - 1) * T.cols + clamp(c, 0, T.cols - 1)]
+  const row = dr => cubic(h(i - 1, j + dr), h(i, j + dr), h(i + 1, j + dr), h(i + 2, j + dr), fx)
+  return cubic(row(-1), row(0), row(1), row(2), fz)
 }
 
 function pointToSegment(x, z, [ax, az], [bx, bz]) {
@@ -199,21 +212,27 @@ function prepareRoads() {
   world.roads.forEach(road => {
     road.ground = road.p.map(([x, z]) => terrainHeight(x, z))
     road.elevated = road.hs.some((h, i) => h > road.ground[i] + 0.4)
+    const lifted = (y, ground) => road.kind === 'water' || road.bridge || (road.elevated && y > ground + 0.4)
+    road.nodes = road.p.map(([x, z], i) => [x, z, lifted(road.hs[i], road.ground[i]) ? road.hs[i] : road.ground[i], lifted(road.hs[i], road.ground[i])])
+    const curve = new THREE.CatmullRomCurve3(road.p.map(([x, z], i) => new THREE.Vector3(x, road.hs[i], z)), false, 'centripetal')
+    road.samples = curve.getSpacedPoints(Math.max(1, Math.ceil(curve.getLength() / 4))).map(({ x, y, z }) => {
+      const ground = terrainHeight(x, z)
+      return lifted(y, ground) ? [x, z, y, true] : [x, z, ground, false]
+    })
   })
 }
 
-function sample(road) {
-  const points = []
-  for (let i = 1; i < road.p.length; i++) {
-    const [ax, az] = road.p[i - 1], [bx, bz] = road.p[i]
-    const raisedSegment = road.hs[i - 1] > road.ground[i - 1] + 0.4 || road.hs[i] > road.ground[i] + 0.4 || road.kind === 'water'
-    const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 8))
-    for (let k = i === 1 ? 0 : 1; k <= steps; k++) {
-      const t = k / steps, x = ax + (bx - ax) * t, z = az + (bz - az) * t
-      points.push([x, z, raisedSegment ? road.hs[i - 1] + (road.hs[i] - road.hs[i - 1]) * t : terrainHeight(x, z), raisedSegment])
+function pointAt(points, distance) {
+  for (let i = 1; i < points.length; i++) {
+    const [ax, az, ay] = points[i - 1], [bx, bz, by] = points[i]
+    const length = Math.hypot(bx - ax, bz - az)
+    if (distance <= length) {
+      const t = distance / length
+      return [ax + (bx - ax) * t, az + (bz - az) * t, ay + (by - ay) * t, points[i][3]]
     }
+    distance -= length
   }
-  return points
+  return points[points.length - 1]
 }
 
 // GEOMETRY HELPERS:
@@ -287,20 +306,14 @@ function disc([x, z, y, elevated], radius, lift) {
   return geometry
 }
 
-function strip(points, width, lift, color, parts, rounded = true) {
-  parts.push(paint(ribbon(points, width, lift), color))
-  if (rounded && width >= 3) points.forEach(point => parts.push(paint(disc(point, width / 2, lift), color)))
+function strip(road, width, lift, color, parts) {
+  parts.push(paint(ribbon(road.samples, width, lift), color))
+  if (width >= 3) road.nodes.forEach(node => parts.push(paint(disc(node, width / 2, lift), color)))
 }
 
 function dashes(points, parts) {
-  for (let i = 1; i < points.length; i++) {
-    const [ax, az, ay] = points[i - 1], [bx, bz, by] = points[i]
-    const length = Math.hypot(bx - ax, bz - az)
-    for (let d = 2; d + 3 <= length; d += 9) {
-      const t0 = d / length, t1 = (d + 3) / length
-      parts.push(paint(ribbon([[ax + (bx - ax) * t0, az + (bz - az) * t0, ay + (by - ay) * t0], [ax + (bx - ax) * t1, az + (bz - az) * t1, ay + (by - ay) * t1]], 0.15, 0.2), COLORS.dash))
-    }
-  }
+  const total = points.slice(1).reduce((sum, [x, z], i) => sum + Math.hypot(x - points[i][0], z - points[i][1]), 0)
+  for (let d = 2; d + 3 <= total; d += 9) parts.push(paint(ribbon([pointAt(points, d), pointAt(points, d + 3)], 0.15, 0.2), COLORS.dash))
 }
 
 function quad(cx, cz, ux, uz, nx, nz, width, bottom, height, color) {
@@ -325,13 +338,13 @@ function buildRoads(groups) {
   const clearance = (road, point) => Math.max(0, ...nodes.get(point.join(',')).filter(other => other !== road).map(other => other.w / 2 + 1.5))
 
   world.roads.forEach(road => {
-    const points = sample(road)
+    const points = road.samples
     if (road.kind === 'water') {
-      strip(points, road.w, road.level === undefined ? 0.12 : 0, COLORS.water, groups.plain)
+      strip(road, road.w, road.level === undefined ? 0.12 : 0, COLORS.water, groups.plain)
     } else if (road.kind === 'path') {
-      strip(points, Math.min(road.w, 1.5), 0.12, COLORS.path, groups.paving)
+      strip(road, Math.min(road.w, 1.5), 0.12, COLORS.path, groups.paving)
     } else {
-      strip(points, road.w, 0.18, COLORS.road, groups.asphalt)
+      strip(road, road.w, 0.18, COLORS.road, groups.asphalt)
       if (road.w >= 4 && road.w <= 8 && !road.elevated) {
         const walk = trim(points, clearance(road, road.p[0]), clearance(road, road.p[road.p.length - 1]))
         for (const side of [-1, 1]) {
@@ -463,7 +476,7 @@ function buildBuildings(groups) {
 
 function buildGround() {
   const [minX, minZ, maxX, maxZ] = world.bounds
-  const resolution = 8
+  const resolution = Math.max(8, (maxX - minX) / 450)
   const cols = Math.ceil((maxX - minX) / resolution), rows = Math.ceil((maxZ - minZ) / resolution)
   const geometry = new THREE.PlaneGeometry(maxX - minX, maxZ - minZ, cols, rows).rotateX(-Math.PI / 2).translate((minX + maxX) / 2, 0, (minZ + maxZ) / 2)
   const position = geometry.attributes.position
@@ -609,71 +622,133 @@ function buildCar() {
   return car
 }
 
-// BEAGLES:
+// WALKERS:
 
-const beagles = []
+const walkers = []
 let explosion = null
 
-function beagleGeometry() {
-  const parts = []
-  const box = (w, h, d, color, x, y, z, tilt = 0) => parts.push(paint(new THREE.BoxGeometry(w, h, d).rotateX(tilt).translate(x, y, z), new THREE.Color(color)))
-  box(0.28, 0.26, 0.7, 0xf2ede4, 0, 0.38, 0)
-  box(0.29, 0.12, 0.42, 0x3b2a1e, 0, 0.5, -0.08)
-  box(0.22, 0.22, 0.28, 0xa5683a, 0, 0.5, 0.42)
-  box(0.14, 0.12, 0.14, 0xf2ede4, 0, 0.44, 0.6)
-  box(0.04, 0.04, 0.04, 0x111111, 0, 0.47, 0.68)
-  for (const side of [-1, 1]) box(0.06, 0.2, 0.14, 0x6b3f22, side * 0.14, 0.42, 0.42)
-  for (const [x, z] of [[-0.1, 0.25], [0.1, 0.25], [-0.1, -0.25], [0.1, -0.25]]) box(0.08, 0.26, 0.08, 0xf2ede4, x, 0.13, z)
-  box(0.06, 0.06, 0.32, 0xf2ede4, 0, 0.55, -0.42, -0.9)
+function box(parts, w, h, d, color, x, y, z, tilt = 0) {
+  parts.push(paint(new THREE.BoxGeometry(w, h, d).rotateX(tilt).translate(x, y, z), new THREE.Color(color)))
+}
+
+function merged(parts) {
   return mergeGeometries(parts.map(part => { part.deleteAttribute('uv'); return part }))
 }
 
-function buildBeagles() {
-  const geometry = beagleGeometry()
+function beagleGeometry() {
+  const parts = []
+  box(parts, 0.28, 0.26, 0.7, 0xf2ede4, 0, 0.38, 0)
+  box(parts, 0.29, 0.12, 0.42, 0x3b2a1e, 0, 0.5, -0.08)
+  box(parts, 0.22, 0.22, 0.28, 0xa5683a, 0, 0.5, 0.42)
+  box(parts, 0.14, 0.12, 0.14, 0xf2ede4, 0, 0.44, 0.6)
+  box(parts, 0.04, 0.04, 0.04, 0x111111, 0, 0.47, 0.68)
+  for (const side of [-1, 1]) box(parts, 0.06, 0.2, 0.14, 0x6b3f22, side * 0.14, 0.42, 0.42)
+  for (const [x, z] of [[-0.1, 0.25], [0.1, 0.25], [-0.1, -0.25], [0.1, -0.25]]) box(parts, 0.08, 0.26, 0.08, 0xf2ede4, x, 0.13, z)
+  box(parts, 0.06, 0.06, 0.32, 0xf2ede4, 0, 0.55, -0.42, -0.9)
+  return merged(parts)
+}
+
+function man(parts, hair, shirt) {
+  const skin = 0xe8b894
+  for (const side of [-1, 1]) {
+    box(parts, 0.16, 0.8, 0.2, 0x2f3a4a, side * 0.1, 0.4, 0)
+    box(parts, 0.12, 0.6, 0.14, shirt, side * 0.27, 1.12, 0)
+    box(parts, 0.1, 0.12, 0.12, skin, side * 0.27, 0.78, 0)
+  }
+  box(parts, 0.4, 0.6, 0.24, shirt, 0, 1.1, 0)
+  box(parts, 0.22, 0.26, 0.24, skin, 0, 1.55, 0)
+  if (hair) box(parts, 0.23, 0.07, 0.25, 0x3a2a1a, 0, 1.71, 0)
+}
+
+function baldManGeometry() {
+  const parts = []
+  man(parts, false, 0x6b8fb5)
+  return merged(parts)
+}
+
+function dogWalkerGeometry() {
+  const parts = []
+  man(parts, true, 0x9a4a3a)
+  const dz = 1.1, fur = 0xc9a67a
+  box(parts, 0.3, 0.32, 0.6, fur, 0, 0.42, dz, 0.35)
+  box(parts, 0.22, 0.22, 0.24, fur, 0, 0.62, dz + 0.4)
+  for (const side of [-1, 1]) {
+    box(parts, 0.06, 0.18, 0.12, 0xb8935f, side * 0.13, 0.56, dz + 0.4)
+    box(parts, 0.08, 0.36, 0.08, fur, side * 0.1, 0.18, dz + 0.22)
+    box(parts, 0.09, 0.18, 0.12, fur, side * 0.11, 0.09, dz - 0.2)
+  }
+  box(parts, 0.04, 0.04, 0.04, 0x222222, 0, 0.6, dz + 0.53)
+  box(parts, 0.05, 0.05, 0.25, fur, 0, 0.5, dz - 0.4, -0.6)
+  box(parts, 0.09, 0.07, 0.09, 0x4a2e12, 0.02, 0.035, dz - 0.42)
+  box(parts, 0.07, 0.06, 0.07, 0x4a2e12, -0.02, 0.09, dz - 0.42)
+  const hand = new THREE.Vector3(0.27, 0.72, 0), collar = new THREE.Vector3(0, 0.62, dz + 0.3)
+  const leash = new THREE.BoxGeometry(0.02, 0.02, hand.distanceTo(collar)).lookAt(collar.clone().sub(hand)).translate(...hand.clone().add(collar).multiplyScalar(0.5).toArray())
+  parts.push(paint(leash, new THREE.Color(0x222222)))
+  return merged(parts)
+}
+
+const KINDS = {
+  beagle:    { geometry: beagleGeometry,    label: 'Beagle',              bob: 0.05, speed: () => random() < 0.25 ? 0 : 0.6 + random() * 1.2 },
+  baldman:   { geometry: baldManGeometry,   label: 'Kale man',            bob: 0.03, speed: () => random() < 0.3 ? 0 : 0.8 + random() * 0.6 },
+  dogwalker: { geometry: dogWalkerGeometry, label: 'Man met labradoodle', bob: 0,    speed: () => 0 }
+}
+
+function buildWalkers() {
+  const geometries = Object.fromEntries(Object.entries(KINDS).map(([kind, { geometry }]) => [kind, geometry()]))
   const spots = []
   world.roads.filter(road => road.kind === 'road' && road.w >= 5 && road.w <= 8).forEach(road => {
-    const points = sample(road)
-    for (let i = 5; i < points.length; i += 12) {
+    const points = road.samples
+    for (let i = 10; i < points.length; i += 24) {
       const [x, z] = points[i], [px, pz] = points[i - 1]
       const length = Math.hypot(x - px, z - pz) || 1
       const side = random() < 0.5 ? -1 : 1, offset = road.w / 2 + 2.5
       spots.push([x - (z - pz) / length * offset * side, z + (x - px) / length * offset * side])
     }
   })
+  const zones = world.zones || []
+  const zoneOf = ([x, z]) => zones.find(zone => inside(zone.p, x, z))
   const candidates = spots.sort(() => random() - 0.5).filter(([x, z]) => Math.hypot(x - world.start.x, z - world.start.z) > 40 && !blocked(x, z))
   const nearby = ([x, z]) => Math.hypot(x - world.start.x, z - world.start.z) < 350
-  ;[...candidates.filter(nearby).slice(0, 60), ...candidates.filter(spot => !nearby(spot)).slice(0, 60)]
-    .forEach(([x, z]) => {
-      const mesh = new THREE.Mesh(geometry, toon)
-      mesh.castShadow = true
-      scene.add(mesh)
-      beagles.push({ mesh, x, z, home: [x, z], heading: random() * Math.PI * 2, speed: 1, timer: 0 })
-    })
-}
-
-function updateBeagles(dt, now) {
-  beagles.forEach(beagle => {
-    beagle.timer -= dt
-    if (beagle.timer < 0) {
-      const far = Math.hypot(beagle.home[0] - beagle.x, beagle.home[1] - beagle.z) > 40
-      beagle.heading = far ? Math.atan2(beagle.home[0] - beagle.x, beagle.home[1] - beagle.z) : beagle.heading + (random() - 0.5) * 3
-      beagle.speed = random() < 0.25 ? 0 : 0.6 + random() * 1.2
-      beagle.timer = 2 + random() * 4
-    }
-    const x = beagle.x + Math.sin(beagle.heading) * beagle.speed * dt, z = beagle.z + Math.cos(beagle.heading) * beagle.speed * dt
-    if (blocked(x, z)) {
-      beagle.heading += Math.PI
-    } else {
-      beagle.x = clamp(x, minX, maxX)
-      beagle.z = clamp(z, minZ, maxZ)
-    }
-    beagle.mesh.position.set(beagle.x, groundHeight(beagle.x, beagle.z) + (beagle.speed ? Math.abs(Math.sin(now / 1000 * 12)) * 0.05 : 0), beagle.z)
-    beagle.mesh.rotation.y = beagle.heading
-    if (!explosion && Math.hypot(beagle.x - state.x, beagle.z - state.z) < 1.6) explode()
+  const chosen = [...candidates.filter(nearby).slice(0, 60), ...candidates.filter(spot => !nearby(spot)).slice(0, 60)]
+  zones.forEach(zone => chosen.push(...candidates.filter(spot => zoneOf(spot) === zone).slice(0, 40)))
+  new Set(chosen).forEach(([x, z]) => {
+    const zone = zoneOf([x, z])
+    const kind = zone ? zone.kind : random() < 0.17 ? 'dogwalker' : 'beagle'
+    const mesh = new THREE.Mesh(geometries[kind], toon)
+    mesh.castShadow = true
+    scene.add(mesh)
+    walkers.push({ kind, mesh, x, z, home: [x, z], heading: random() * Math.PI * 2, speed: 0, timer: 0 })
   })
 }
 
-function explode() {
+function updateWalkers(dt, now) {
+  walkers.forEach(walker => {
+    const kind = KINDS[walker.kind]
+    walker.timer -= dt
+    if (walker.timer < 0) {
+      walker.speed = kind.speed()
+      if (walker.speed) {
+        const far = Math.hypot(walker.home[0] - walker.x, walker.home[1] - walker.z) > 40
+        walker.heading = far ? Math.atan2(walker.home[0] - walker.x, walker.home[1] - walker.z) : walker.heading + (random() - 0.5) * 3
+      }
+      walker.timer = 2 + random() * 4
+    }
+    const x = walker.x + Math.sin(walker.heading) * walker.speed * dt, z = walker.z + Math.cos(walker.heading) * walker.speed * dt
+    if (blocked(x, z)) {
+      walker.heading += Math.PI
+    } else {
+      walker.x = clamp(x, minX, maxX)
+      walker.z = clamp(z, minZ, maxZ)
+    }
+    walker.mesh.position.set(walker.x, groundHeight(walker.x, walker.z) + (walker.speed ? Math.abs(Math.sin(now / 1000 * 12)) * kind.bob : 0), walker.z)
+    walker.mesh.rotation.y = walker.heading
+    const hits = [[walker.x, walker.z]]
+    if (walker.kind === 'dogwalker') hits.push([walker.x + Math.sin(walker.heading) * 1.1, walker.z + Math.cos(walker.heading) * 1.1])
+    if (!explosion && hits.some(([hx, hz]) => Math.hypot(hx - state.x, hz - state.z) < 1.6)) explode(kind.label)
+  })
+}
+
+function explode(label) {
   const fireball = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), new THREE.MeshBasicMaterial({ color: 0xff7a1a, transparent: true }))
   fireball.material.userData.outlineParameters = { visible: false }
   fireball.position.set(state.x, groundHeight(state.x, state.z) + 1, state.z)
@@ -685,7 +760,7 @@ function explode() {
   }
   state.speed = 0
   state.shake = 3
-  streetEl.textContent = 'BOEM! Beagle geraakt'
+  streetEl.textContent = `BOEM! ${label} geraakt`
   setTimeout(() => location.reload(), 2500)
 }
 
@@ -738,13 +813,17 @@ function blocked(x, z) {
   return (grid.get(cellKey(x, z)) || []).some(i => inside(world.buildings[i].p, x, z))
 }
 
-const segments = world.roads.filter(road => road.kind === 'road').flatMap(road => road.p.slice(1).map((b, i) => ({ road, i, a: road.p[i], b })))
+let segments = []
 const segmentGrid = new Map()
-segments.forEach((segment, i) => {
-  const key = cellKey((segment.a[0] + segment.b[0]) / 2, (segment.a[1] + segment.b[1]) / 2)
-  if (!segmentGrid.has(key)) segmentGrid.set(key, [])
-  segmentGrid.get(key).push(i)
-})
+
+function indexRoads() {
+  segments = world.roads.filter(road => road.kind === 'road').flatMap(road => road.samples.slice(1).map((b, i) => ({ road, a: road.samples[i], b })))
+  segments.forEach((segment, i) => {
+    const key = cellKey((segment.a[0] + segment.b[0]) / 2, (segment.a[1] + segment.b[1]) / 2)
+    if (!segmentGrid.has(key)) segmentGrid.set(key, [])
+    segmentGrid.get(key).push(i)
+  })
+}
 
 function nearestSegment(x, z) {
   let best = null, bestDistance = Infinity, bestT = 0
@@ -760,7 +839,7 @@ function nearestSegment(x, z) {
 
 function groundHeight(x, z) {
   const { segment, distance, t } = nearestSegment(x, z)
-  if (segment && segment.road.elevated && distance < segment.road.w / 2 + 1.5) return segment.road.hs[segment.i] + (segment.road.hs[segment.i + 1] - segment.road.hs[segment.i]) * t
+  if (segment && segment.road.elevated && distance < segment.road.w / 2 + 1.5) return segment.a[2] + (segment.b[2] - segment.a[2]) * t
   return terrainHeight(x, z)
 }
 
@@ -809,8 +888,7 @@ function drawMinimap() {
       map.fill()
     }
   }
-  map.fillStyle = '#8b5a2b'
-  beagles.forEach(beagle => map.fillRect(beagle.x - 2.5, beagle.z - 2.5, 5, 5))
+  walkers.forEach(walker => { map.fillStyle = walker.kind === 'beagle' ? '#8b5a2b' : '#2b5a8b'; map.fillRect(walker.x - 2.5, walker.z - 2.5, 5, 5) })
   map.restore()
 
   map.save()
@@ -836,14 +914,16 @@ index(world.buildings, building => {
   const xs = building.p.map(p => p[0]), zs = building.p.map(p => p[1])
   return [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)]
 })
+smoothTerrain()
 digWater()
 prepareRoads()
+indexRoads()
 buildWorld()
 const car = buildCar()
-buildBeagles()
+buildWalkers()
 
 const keys = new Set()
-window.debug = { keys, beagles, get state() { return state } }
+window.debug = { keys, walkers, get state() { return state } }
 addEventListener('keydown', event => { keys.add(event.code); if (event.code.startsWith('Arrow')) event.preventDefault() })
 addEventListener('keyup', event => keys.delete(event.code))
 addEventListener('resize', () => {
@@ -926,7 +1006,7 @@ function step(dt, now) {
     streetTimer = 0.25
     streetEl.textContent = streetName(state.x, state.z)
   }
-  updateBeagles(dt, now)
+  updateWalkers(dt, now)
   drawMinimap()
 }
 

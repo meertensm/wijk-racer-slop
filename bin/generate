@@ -44,7 +44,7 @@ end
 
 area = bbox.join(',')
 query = <<~QL
-  [out:json][timeout:90];
+  [out:json][timeout:300];
   (
     way["building"](#{area});
     way["highway"](#{area});
