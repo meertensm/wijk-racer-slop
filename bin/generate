@@ -17,6 +17,7 @@ WIDTHS  = { 'motorway' => 12, 'motorway_link' => 6, 'trunk' => 10, 'trunk_link' 
             'secondary' => 8, 'secondary_link' => 6, 'tertiary' => 7, 'residential' => 6, 'unclassified' => 6,
             'living_street' => 5, 'pedestrian' => 5, 'service' => 4, 'track' => 3, 'cycleway' => 2.5, 'footway' => 2, 'path' => 1.5 }
 PATHS   = %w[track cycleway footway path]
+WATER   = { 'river' => 100, 'canal' => 50, 'stream' => 2.5, 'ditch' => 1.5, 'drain' => 1.5 }
 
 def project(pt, lat0, lng0)
   [((pt['lon'] - lng0) * 111_320 * Math.cos(lat0 * Math::PI / 180)).round(1),
@@ -51,14 +52,18 @@ query = <<~QL
     way["natural"~"^(water|wood|scrub)$"](#{area});
     way["landuse"~"^(grass|forest|farmland|meadow|orchard|allotments)$"](#{area});
     way["leisure"~"^(park|pitch|playground|garden)$"](#{area});
-    way["waterway"~"^(river|canal|stream)$"](#{area});
+    way["waterway"~"^(river|canal|stream|ditch|drain)$"](#{area});
   );
   out geom;
 QL
 
 warn "Fetching #{name} from Overpass..."
-response = Net::HTTP.post_form(URI('https://overpass-api.de/api/interpreter'), data: query)
-elements = JSON.parse(response.body.force_encoding('UTF-8'))['elements']
+elements = %w[https://overpass-api.de/api/interpreter https://overpass.kumi.systems/api/interpreter].each do |server|
+  response = Net::HTTP.post_form(URI(server), data: query)
+  break JSON.parse(response.body.force_encoding('UTF-8'))['elements'] if response.code == '200'
+  warn "#{server} answered #{response.code}, trying the next one"
+end
+abort 'Overpass unavailable' unless elements.is_a?(Array)
 
 buildings, roads, areas, trees = [], [], [], []
 
@@ -84,9 +89,9 @@ elements.each do |element|
                    roof: ROOFED.include?(type) && height <= 9 ? 'hip' : 'flat' }
   elsif tags['highway'] && WIDTHS[tags['highway']]
     roads << { p: points, w: WIDTHS[tags['highway']], kind: PATHS.include?(tags['highway']) ? 'path' : 'road',
-               name: tags['name'] }.compact
+               name: tags['name'], bridge: (true if tags['bridge'] && tags['bridge'] != 'no') }.compact
   elsif tags['waterway']
-    roads << { p: points, w: tags['waterway'] == 'stream' ? 3 : 10, kind: 'water' }
+    roads << { p: points, w: tags['width']&.to_f || WATER[tags['waterway']], kind: 'water', name: tags['name'] }.compact
   elsif closed && points.size >= 3
     kind = if tags['natural'] == 'water' then 'water'
            elsif tags['natural'] == 'wood' || tags['landuse'] == 'forest' then 'forest'
@@ -121,8 +126,36 @@ if start_street
 end
 
 corners = [[bbox[0], bbox[1]], [bbox[2], bbox[3]]].map { |lat, lon| project({ 'lat' => lat, 'lon' => lon }, lat0, lng0) }
-world = { name: name, center: [lat0, lng0], bounds: [corners[0][0], corners[1][1], corners[1][0], corners[0][1]],
-          start: start, buildings: buildings, roads: roads, areas: areas, trees: trees }
+bounds  = [corners[0][0], corners[1][1], corners[1][0], corners[0][1]]
+
+warn 'Fetching elevation from AHN...'
+wcs = "https://service.pdok.nl/rws/ahn/wcs/v1_0?SERVICE=WCS&VERSION=2.0.1&REQUEST=GetCoverage&COVERAGEID=dtm_05m&FORMAT=image/tiff" \
+      "&SUBSETTINGCRS=http://www.opengis.net/def/crs/EPSG/0/4326&OUTPUTCRS=http://www.opengis.net/def/crs/EPSG/0/4326" \
+      "&SUBSET=Lat(#{bbox[0]},#{bbox[2]})&SUBSET=Long(#{bbox[1]},#{bbox[3]})&SCALEFACTOR=0.05"
+tiff = Net::HTTP.get_response(URI(wcs))
+abort "AHN: #{tiff.code} #{tiff.body[0, 200]}" unless tiff.code == '200'
+File.binwrite('/tmp/ahn.tif', tiff.body)
+system('vips', 'csvsave', '/tmp/ahn.tif', '/tmp/ahn.csv', '--separator', ',') || abort('vips failed')
+grid = File.readlines('/tmp/ahn.csv').map { |line| line.split(',').map { |v| v = v.to_f; v.abs < 1000 ? v : nil } }
+rows, cols = grid.size, grid.first.size
+
+while grid.flatten.include?(nil)
+  grid = grid.each_with_index.map do |row, r|
+    row.each_with_index.map do |value, c|
+      next value if value
+      neighbours = [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]].filter_map { |nr, nc| grid.dig(nr, nc) if nr.between?(0, rows - 1) && nc.between?(0, cols - 1) }
+      neighbours.empty? ? nil : neighbours.sum / neighbours.size
+    end
+  end
+end
+
+heights = grid.flatten
+lowest  = heights.min
+terrain = { x0: bounds[0], z0: bounds[1], sx: ((bounds[2] - bounds[0]) / cols).round(3), sz: ((bounds[3] - bounds[1]) / rows).round(3),
+            cols: cols, rows: rows, heights: heights.map { |h| (h - lowest).round(1) } }
+
+world = { name: name, center: [lat0, lng0], bounds: bounds, start: start, terrain: terrain,
+          buildings: buildings, roads: roads, areas: areas, trees: trees }
 
 File.write("worlds/#{name}.json", JSON.generate(world))
-warn "#{buildings.size} buildings, #{roads.size} roads, #{areas.size} areas, #{trees.size} trees -> worlds/#{name}.json"
+warn "#{buildings.size} buildings, #{roads.size} roads, #{areas.size} areas, #{trees.size} trees, #{heights.size} heights (#{lowest}-#{heights.max} m) -> worlds/#{name}.json"

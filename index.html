@@ -5,13 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Wijk Racer</title>
   <style>
-    html, body { margin: 0; height: 100%; overflow: hidden; background: #9fdcff; font-family: system-ui, sans-serif; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #dfeeff; font-family: system-ui, sans-serif; }
     canvas { display: block; }
-    #hud { position: fixed; inset: auto 24px 20px 24px; display: flex; justify-content: space-between; align-items: flex-end; pointer-events: none; color: #fff; text-shadow: 0 2px 6px rgba(0, 0, 0, .6); }
+    #hud { position: fixed; inset: auto 24px 20px 250px; display: flex; justify-content: space-between; align-items: flex-end; pointer-events: none; color: #fff; text-shadow: 0 2px 6px rgba(0, 0, 0, .6); }
     #street { font-size: 28px; font-weight: 600; }
     #speed { font-size: 56px; font-weight: 800; line-height: 1; }
     #speed small { font-size: 18px; margin-left: 6px; }
     #hint { position: fixed; top: 16px; left: 24px; color: #fff; text-shadow: 0 1px 4px rgba(0, 0, 0, .6); font-size: 14px; opacity: .85; }
+    #minimap { position: fixed; left: 24px; bottom: 20px; width: 200px; height: 200px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, .85); background: #cfe3b5; box-shadow: 0 4px 16px rgba(0, 0, 0, .35); }
   </style>
   <script type="importmap">
     {
@@ -24,10 +25,11 @@
 </head>
 <body>
   <div id="hint">Pijltjes of WASD · Shift = handrem</div>
+  <canvas id="minimap" width="400" height="400"></canvas>
   <div id="hud">
     <div id="street"></div>
     <div id="speed">0<small>km/u</small></div>
   </div>
-  <script type="module" src="game.js"></script>
+  <script type="module">import(`./game.js?${Date.now()}`)</script>
 </body>
 </html>
