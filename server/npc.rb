@@ -7,6 +7,8 @@ class Npc < Entity
   PACE   = 0.8..1.4
   GENDERS = %i[male]
   MOODS   = %i[angry]
+  LINES   = {}
+  RANGE   = 60
   PAUSE   = 8
 
   attr_reader :speed, :version, :dead, :dead_at, :killer, :home, :voice
@@ -37,6 +39,14 @@ class Npc < Entity
     self.class::REWARD
   end
 
+  def lines
+    self.class::LINES.fetch(voice.mood, [])
+  end
+
+  def self.describe
+    { 'label' => self::LABEL, 'reward' => self::REWARD, 'range' => self::RANGE, 'lines' => self::LINES.transform_keys(&:to_s) }
+  end
+
   def mortal?
     !reward.nil?
   end
@@ -57,7 +67,6 @@ class Npc < Entity
   end
 
   def say(game)
-    lines = game.lines_for(self)
     return if dead || lines.empty? || game.now < @quiet_until
     index        = (rand * lines.length).floor
     @chatted     = game.now

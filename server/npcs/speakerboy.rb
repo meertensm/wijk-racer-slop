@@ -4,6 +4,18 @@ class Speakerboy < HumanoidNpc
   LEASH  = 120
   IDLE   = 0
   PACE   = 4.5..6.0
+  LINES = {
+    angry: [
+      'SPEAKERBOY!',
+      'SPEAKERBOOOOOOY!',
+      'SPEAKERBOY! SPEAKERBOY! SPEAKERBOY!',
+      'SPEAKERBOY, JONGUH! HARDER, KANKERHARD!',
+      'IK BEN SPEAKERBOY, KUTLUL!',
+      'SPEAKERBOY IN DE PLAATS! MAAK RUIMTE, TERINGLIJERS!',
+      'HARDER! HARDER! SPEAKERBOY, GODVERDOMME!',
+      'SPEAKERBOY! OH OH OH OH! KANKER!'
+    ]
+  }
 
   def decide(_game)
     @speed   = pick_speed

@@ -2,11 +2,10 @@ class Game
   TICK, NET, RANGE, DROP, ACTIVE = 0.05, 0.1, 600, 660, 700
   attr_reader :inbox, :now, :world, :npcs
 
-  def initialize(world, npcs, scores, voices = {})
+  def initialize(world, npcs, scores)
     @world   = world
     @npcs    = npcs
     @scores  = scores
-    @voices  = voices
     @inbox   = Thread::Queue.new
     @players = {}
     @poops   = []
@@ -37,10 +36,6 @@ class Game
     events << ['score', player.id, 0]
   end
 
-  def lines_for(npc)
-    voices.dig(npc.kind, npc.voice.mood.to_s) || []
-  end
-
   def say(npc, index)
     events << ['say', npc.id, index]
   end
@@ -64,7 +59,7 @@ class Game
 
   private
 
-  attr_reader :scores, :players, :poops, :events, :voices
+  attr_reader :scores, :players, :poops, :events
 
   def run
     last = clock
@@ -119,7 +114,7 @@ class Game
     client.player = player
     players[player.id] = player
     player.last_seen = now
-    client.send('welcome' => { 'id' => player.id, 'world' => world.name, 'kinds' => Npc::KINDS, 'score' => scores[player.name], 't' => now.round(2), 'poops' => poops.map(&:to_row) })
+    client.send('welcome' => { 'id' => player.id, 'world' => world.name, 'kinds' => Npc::KINDS, 'npcs' => Population::CLASSES.transform_values(&:describe), 'score' => scores[player.name], 't' => now.round(2), 'poops' => poops.map(&:to_row) })
   end
 
   def leave(client)

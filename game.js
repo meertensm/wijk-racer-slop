@@ -20,7 +20,6 @@ const TIPS = [
 let audio, hardstyle, nextBeat = 0, beat = 0, engine, engineGain, sfx, metal, metalTimer, metalBeat = 0, metalNext = 0, engineSample = null, hardstyleSampled = false
 const RIFF = [[82.41, 1], [82.41, 1], [82.41, 0], [98, 1], [82.41, 1], [82.41, 0], [110, 1], [110, 1], [82.41, 1], [82.41, 0], [82.41, 1], [73.42, 1], [82.41, 1], [82.41, 0], [98, 1], [110, 1]]
 const NOTES = [220, 261.6, 329.6, 392, 329.6, 261.6, 220, 196]
-const VOICES = await fetch('assets/voices.json').then(response => response.json())
 addEventListener('keydown', () => startMetal(), { once: true })
 const loadingEl = document.getElementById('loading')
 const loadingBar = loadingEl.querySelector('#loading-bar i')
@@ -1364,7 +1363,8 @@ const KINDS = {
   junkie:      { geometry: junkieGeometry,      label: 'Junk',                  bob: 0.05 }
 }
 
-const REWARD = { zombie: 0.2, zwerver: 0.2, junkie: 0.2, baldman: 0.1, baldflag: 0.1, speakerboy: 5 }
+let NPC_INFO = {}
+const describe = kind => NPC_INFO[kind] || { label: KINDS[kind]?.label || kind, reward: null, range: 60, lines: {} }
 const dummy = new THREE.Object3D()
 
 function buildNpcMeshes() {
@@ -1464,8 +1464,8 @@ function updateNpcs(dt, now) {
 function contact(npc, perf) {
   sendPos(perf, true)
   if (npc.kind === 'labradoodle') return
-  if (npc.kind === 'dogwalker' || REWARD[npc.kind]) { npc.predictedAt = perf; killEffects(npc) }
-  else explode(KINDS[npc.kind].label)
+  if (describe(npc.kind).reward !== null) { npc.predictedAt = perf; killEffects(npc) }
+  else explode(describe(npc.kind).label)
 }
 
 function unpredict(npc) {
@@ -1497,8 +1497,8 @@ function markDead(npc) {
 
 function killEffects(npc) {
   markDead(npc)
-  const gerard = npc.kind === 'dogwalker', reward = gerard ? 1 : REWARD[npc.kind]
-  streetEl.textContent = gerard ? 'Niet poep oprapende labradoodle uitlater overreden: +1 coin' : `${KINDS[npc.kind].label} geplet: +${reward.toLocaleString('nl-NL')} coin`
+  const gerard = npc.kind === 'dogwalker', { label, reward } = describe(npc.kind)
+  streetEl.textContent = `${label} ${gerard ? 'overreden' : 'geplet'}: +${reward.toLocaleString('nl-NL')} coin`
   thud(gerard ? 1 : 0.8)
   scream(gerard ? 'man' : npc.kind)
   if (gerard) { state.blood = 45; state.bloodAt = [state.x, state.z] }
@@ -2286,7 +2286,7 @@ function synthBark(distance) {
 
 async function speak(npc, index) {
   const gender = npc.voice & 2 ? 'female' : 'male', mood = npc.voice & 1 ? 'happy' : 'angry'
-  const lines = VOICES.npcs[npc.kind]?.[mood] || []
+  const lines = describe(npc.kind).lines[mood] || []
   if (!lines[index]) return
   hush(npc)
   const track = await playSample(`voice-${npc.kind}-${gender}-${mood}-${index + 1}`, { level: voiceLevel(npc) })
@@ -2309,7 +2309,7 @@ async function speak(npc, index) {
   speechSynthesis.speak(line)
 }
 
-const voiceLevel = npc => Math.max(0, 1 - Math.hypot(npc.x - state.x, npc.z - state.z) / 60) ** 2 * 1.4
+const voiceLevel = npc => Math.max(0, 1 - Math.hypot(npc.x - state.x, npc.z - state.z) / describe(npc.kind).range) ** 2 * 1.4
 
 function hush(npc) {
   const talking = npc.talking
@@ -2453,6 +2453,7 @@ function welcome(data) {
   myId = data.id
   serverOffset = data.t - performance.now() / 1000
   KIND_NAMES = data.kinds
+  NPC_INFO = data.npcs
   showScore(data.score)
   data.poops.forEach(addPoop)
   hintEl.textContent = HINT
@@ -2515,7 +2516,7 @@ const EVENTS = {
   },
   boom(player, id) {
     if (player !== myId) return
-    explode(KINDS[npcs.get(id)?.kind]?.label || 'Beagle')
+    explode(describe(npcs.get(id)?.kind).label)
     explosion.confirmed = true
   },
   respawn(player) { if (player === myId) respawn() },
@@ -2527,7 +2528,7 @@ const EVENTS = {
   },
   say(id, index) {
     const npc = npcs.get(id)
-    if (!npc || npc.dead || Math.hypot(npc.x - state.x, npc.z - state.z) > 60) return
+    if (!npc || npc.dead || Math.hypot(npc.x - state.x, npc.z - state.z) > describe(npc.kind).range) return
     speak(npc, index)
   },
   bark(id) {

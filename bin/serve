@@ -11,5 +11,4 @@ Dir.chdir(root)
 world = World.load(ARGV[1] || 'sittard-geleen')
 npcs  = Population.new(world).build
 puts "#{world.name}: #{npcs.length} npcs"
-voices = JSON.parse(File.read('assets/voices.json', encoding: 'UTF-8'))['npcs']
-Server.new(Integer(ARGV[0] || 8765), Game.new(world, npcs, Scores.new('data/scores.json'), voices), root).run
+Server.new(Integer(ARGV[0] || 8765), Game.new(world, npcs, Scores.new('data/scores.json')), root).run

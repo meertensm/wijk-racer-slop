@@ -2,7 +2,7 @@ class Population
   CLASSES = {
     'beagle'     => Beagle,    'baldman'   => BaldMan,   'baldflag' => BaldFlag, 'dogwalker' => DogWalker,
     'tattooman'  => TattooMan, 'speakerboy' => Speakerboy, 'zwerver' => Zwerver, 'zombie'   => Zombie,
-    'junkie'     => Junkie
+    'junkie'     => Junkie,    'labradoodle' => Labradoodle
   }
 
   def initialize(world, random = Random.new(7))
