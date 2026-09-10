@@ -5,21 +5,22 @@ require 'net/http'
 key    = ENV.fetch('AZURE_SPEECH_KEY') { abort 'Set AZURE_SPEECH_KEY (and optionally AZURE_SPEECH_REGION, default westeurope)' }
 region = ENV.fetch('AZURE_SPEECH_REGION', 'westeurope')
 root   = File.expand_path('..', __dir__)
-lines  = JSON.parse(File.read("#{root}/assets/voices.json"))
-STYLE  = { 'gerard' => { voice: 'nl-NL-MaartenNeural', rate: '+12%', pitch: '-4%' }, 'godver' => { voice: 'nl-NL-MaartenNeural', rate: '+5%', pitch: '-18%' } }
+sets   = JSON.parse(File.read("#{root}/assets/voices.json"))
 
 http = Net::HTTP.new("#{region}.tts.speech.microsoft.com", 443)
 http.use_ssl = true
 
-lines.each do |set, texts|
-  style = STYLE.fetch(set)
-  texts.each_with_index do |text, index|
-    path = "#{root}/assets/sounds/voice-#{set}-#{index + 1}.mp3"
+sets.each do |set, style|
+  style['lines'].each_with_index do |text, index|
+    path = "#{root}/assets/sounds/#{style['file'] || "voice-#{set}-"}#{index + 1}.mp3"
     next if File.exist?(path)
 
+    lang = style['voice'][/^[a-z]+-[A-Z]+/]
     ssml = <<~SSML
-      <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="nl-NL">
-        <voice name="#{style[:voice]}"><prosody rate="#{style[:rate]}" pitch="#{style[:pitch]}">#{text.encode(xml: :text)}</prosody></voice>
+      <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="#{lang}">
+        <voice name="#{style['voice']}">
+          <prosody rate="#{style['rate']}" pitch="#{style['pitch']}" volume="#{style['volume']}"><emphasis level="strong">#{text.encode(xml: :text)}</emphasis></prosody>
+        </voice>
       </speak>
     SSML
     request = Net::HTTP::Post.new('/cognitiveservices/v1', 'Ocp-Apim-Subscription-Key' => key, 'Content-Type' => 'application/ssml+xml', 'X-Microsoft-OutputFormat' => 'audio-24khz-96kbitrate-mono-mp3', 'User-Agent' => 'wijk-racer')

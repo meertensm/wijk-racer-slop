@@ -1468,7 +1468,7 @@ function updateWalkers(dt, now) {
     }
     placeWalker(walker, walker.speed ? Math.abs(Math.sin(now / 1000 * 12)) * kind.bob : 0)
     const distance = Math.hypot(walker.x - state.x, walker.z - state.z)
-    if (walker.kind.startsWith('bald') && distance < 12 && Math.abs(state.speed) > 6 && now - lastGodver > 6000) { lastGodver = now; curse('godver') }
+    if (walker.kind.startsWith('bald') && distance < 12 && Math.abs(state.speed) > 6 && now - lastGodver > 6000) { lastGodver = now; curse(walker.kind === 'baldflag' ? 'brabant' : 'godver') }
     if (explosion || distance >= 1.6) return
     if (walker.kind === 'dogwalker') runOver(walker)
     else if (walker.kind === 'labradoodle') { if (!walker.owner.dead) runOver(walker.owner) }
@@ -1493,7 +1493,7 @@ function squash(walker, remote = false) {
   streetEl.textContent = `${KINDS[walker.kind].label} geplet: +${reward.toLocaleString('nl-NL')} G-Point`
   thud(0.8)
   scream(walker.kind)
-  if (walker.kind.startsWith('bald')) setTimeout(() => curse('godver'), 500)
+  if (walker.kind.startsWith('bald')) setTimeout(() => curse(walker.kind === 'baldflag' ? 'brabant' : 'godver'), 500)
   awardCoin(walker.x, walker.z, reward)
   dirty(0.12)
   send({ kill: walkers.indexOf(walker), x: +walker.x.toFixed(1), z: +walker.z.toFixed(1) })
@@ -2314,13 +2314,14 @@ function updateBarks(dt) {
 }
 
 async function curse(set) {
-  const index = Math.floor(Math.random() * VOICES[set].length)
+  const lines = VOICES[set].lines, index = Math.floor(Math.random() * lines.length)
   if (await playSample(`voice-${set}-${index + 1}`, { level: 1.2 })) return
   if (!('speechSynthesis' in window)) return
-  const line = new SpeechSynthesisUtterance(VOICES[set][index])
+  const line = new SpeechSynthesisUtterance(lines[index])
   line.lang = 'nl-NL'
   line.rate = 1.1 + Math.random() * 0.15
-  line.pitch = set === 'godver' ? 0.6 : 0.8
+  line.pitch = set === 'gerard' ? 0.8 : 0.6
+  line.volume = 1
   const voice = speechSynthesis.getVoices().find(v => v.lang.startsWith('nl'))
   if (voice) line.voice = voice
   speechSynthesis.speak(line)
