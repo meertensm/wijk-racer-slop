@@ -143,7 +143,7 @@ function infectable(material) {
         '  infected = max(infected, smoothstep(poop.w, poop.w * 0.75, d));',
         '}',
         'float lum = dot(gl_FragColor.rgb, vec3(0.299, 0.587, 0.114));',
-        'gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(lum) * 0.92, infected);'
+        'gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(lum) * vec3(0.62, 0.66, 0.42) + vec3(0.06, 0.05, 0.0), infected);'
       ].join('\n'))
   }
   return material
@@ -701,8 +701,9 @@ function curb(ring, top, bottom, parts) {
 function buildRoadPolygons(groups) {
   const tiles = new Map()
   world.roads.filter(road => road.kind === 'road' && !road.elevated && !road.bridge).forEach(road => {
-    road.asphalt = [bufferRing(road.samples, road.w)]
-    road.walkway = road.w >= 5 && road.w <= 8 && !road.dual ? [bufferRing(road.samples, road.w + 3.1)] : null
+    const coarse = road.samples.filter((_, i) => i % 2 === 0 || i === road.samples.length - 1)
+    road.asphalt = [bufferRing(coarse, road.w)]
+    road.walkway = road.w >= 5 && road.w <= 8 && !road.dual ? [bufferRing(coarse, road.w + 3.1)] : null
     const xs = road.samples.map(p => p[0]), zs = road.samples.map(p => p[1])
     const margin = road.w / 2 + 2
     for (let tx = Math.floor((Math.min(...xs) - margin) / TILE); tx <= Math.floor((Math.max(...xs) + margin) / TILE); tx++)
@@ -1016,6 +1017,14 @@ function buildSky() {
   clouds.castShadow = false
 }
 
+const bodyParts = []
+const CLEAN = new THREE.Color(0xefe6cf), FILTHY = new THREE.Color(0x4a3a24)
+
+function dirty(amount) {
+  state.dirt = Math.min(1, (state.dirt || 0) + amount)
+  bodyParts.forEach((mesh, i) => mesh.material.color.copy(CLEAN).lerp(FILTHY, state.dirt * (i ? 0.8 : 1)))
+}
+
 function buildCar() {
   const car = new THREE.Group()
   car.rotation.order = 'YXZ'
@@ -1028,8 +1037,7 @@ function buildCar() {
   }
   const body = 0xefe6cf, glass = 0x2b3a4a, plastic = 0x3a3a3a
 
-  part(1.46, 0.5, 3.38, body, 0, 0.6, 0)
-  part(1.42, 0.6, 2.4, body, 0, 1.15, -0.45)
+  bodyParts.push(part(1.46, 0.5, 3.38, body, 0, 0.6, 0), part(1.42, 0.6, 2.4, body, 0, 1.15, -0.45))
   part(1.48, 0.14, 3.42, plastic, 0, 0.42, 0)
   part(1.5, 0.12, 0.12, plastic, 0, 0.45, 1.72)
   part(1.5, 0.12, 0.12, plastic, 0, 0.45, -1.72)
@@ -1176,12 +1184,36 @@ function labradoodleGeometry() {
   return merged(parts)
 }
 
+function speakerboyGeometry() {
+  const parts = []
+  const wheel = (z) => parts.push(paint(new THREE.CylinderGeometry(0.35, 0.35, 0.05, 14).rotateZ(Math.PI / 2).translate(0, 0.35, z), new THREE.Color(0x111111)))
+  wheel(0.55)
+  wheel(-0.55)
+  box(parts, 0.05, 0.05, 1.1, 0x2255aa, 0, 0.62, 0)
+  box(parts, 0.05, 0.4, 0.05, 0x2255aa, 0, 0.8, -0.15)
+  box(parts, 0.05, 0.45, 0.05, 0x2255aa, 0, 0.8, 0.45)
+  box(parts, 0.5, 0.04, 0.04, 0x333333, 0, 1.02, 0.5)
+  box(parts, 0.25, 0.05, 0.2, 0x222222, 0, 1.0, -0.15)
+  for (const side of [-1, 1]) {
+    box(parts, 0.12, 0.5, 0.14, 0x2f3a4a, side * 0.12, 0.75, 0.05)
+    box(parts, 0.1, 0.42, 0.1, 0xff6a00, side * 0.22, 1.2, 0.25, -0.9)
+  }
+  box(parts, 0.34, 0.5, 0.22, 0xff6a00, 0, 1.3, -0.08)
+  box(parts, 0.2, 0.22, 0.2, 0xe8b894, 0, 1.68, -0.05)
+  box(parts, 0.26, 0.13, 0.28, 0x39ff14, 0, 1.84, -0.04)
+  box(parts, 0.5, 0.3, 0.25, 0x111111, 0, 0.82, -0.65)
+  box(parts, 0.42, 0.22, 0.03, 0x555555, 0, 0.82, -0.79)
+  box(parts, 0.06, 0.06, 0.06, 0x2299ff, 0.18, 0.95, -0.78)
+  return merged(parts)
+}
+
 const KINDS = {
   beagle:    { geometry: beagleGeometry,    label: 'Beagle',              bob: 0.05, speed: () => random() < 0.25 ? 0 : 0.6 + random() * 1.2 },
   baldman:   { geometry: baldManGeometry,   label: 'Kale man',            bob: 0.03, speed: () => random() < 0.3 ? 0 : 0.8 + random() * 0.6 },
   dogwalker:   { geometry: dogWalkerGeometry,   label: 'Niet poep oprapende labradoodle uitlater', bob: 0.03, speed: () => random() < 0.35 ? 0 : 0.7 + random() * 0.5 },
   labradoodle: { geometry: labradoodleGeometry, label: 'Labradoodle',         bob: 0.08, speed: () => 0 },
   tattooman:   { geometry: tattooManGeometry,   label: 'Getatoeëerde kale man', bob: 0, speed: () => 0 },
+  speakerboy:  { geometry: speakerboyGeometry,  label: 'Speakerboy',            bob: 0.02, speed: () => 4.5 + random() * 1.5 },
   zwerver:     { geometry: zwerverGeometry,     label: 'Zwerver',               bob: 0.02, speed: () => random() < 0.6 ? 0 : 0.3 + random() * 0.3 },
   zombie:      { geometry: zombieGeometry,      label: 'Zombie',                bob: 0.06, speed: () => 0.6 },
   junkie:      { geometry: junkieGeometry,      label: 'Junk',                  bob: 0.05, speed: () => random() < 0.2 ? 0 : 1.6 + random() * 1.2 }
@@ -1271,9 +1303,10 @@ function updateWalkers(dt, now) {
         return
       }
       if (walker.kind === 'junkie') walker.timer = 0.4 + random() * 0.8
+      if (walker.kind === 'speakerboy') { walker.timer = 3 + random() * 4; walker.heading += (random() - 0.5) * 0.8 }
       if (walker.kind === 'dogwalker' && !walker.speed && walker.dog && random() < 0.5 && now - (walker.pooped || 0) > 45000) { walker.pooped = now; dropPoop(walker.dog.x, walker.dog.z) }
       if (walker.speed) {
-        const far = Math.hypot(walker.home[0] - walker.x, walker.home[1] - walker.z) > (walker.kind === 'dogwalker' ? 150 : 40)
+        const far = Math.hypot(walker.home[0] - walker.x, walker.home[1] - walker.z) > (walker.kind === 'dogwalker' ? 150 : walker.kind === 'speakerboy' ? 400 : 40)
         walker.heading = far ? Math.atan2(walker.home[0] - walker.x, walker.home[1] - walker.z) : walker.heading + (random() - 0.5) * 3
       }
       walker.timer = 2 + random() * 4
@@ -1289,7 +1322,7 @@ function updateWalkers(dt, now) {
     if (explosion || Math.hypot(walker.x - state.x, walker.z - state.z) >= 1.6) return
     if (walker.kind === 'dogwalker') runOver(walker)
     else if (walker.kind === 'labradoodle') { if (!walker.owner.dead) runOver(walker.owner) }
-    else if (walker.kind === 'zombie') squashZombie(walker)
+    else if (['zombie', 'zwerver', 'junkie'].includes(walker.kind)) squash(walker)
     else explode(kind.label)
   })
 }
@@ -1299,15 +1332,17 @@ blood.userData.outlineParameters = { visible: false }
 const slime = new THREE.MeshBasicMaterial({ color: 0x4f8a2a, transparent: true, opacity: 0.85 })
 slime.userData.outlineParameters = { visible: false }
 
-function squashZombie(walker) {
+function squash(walker) {
   walker.dead = true
   placeWalker(walker, 0)
-  const splat = new THREE.Mesh(new THREE.CircleGeometry(1.2, 12).rotateX(-Math.PI / 2), slime)
+  const splat = new THREE.Mesh(new THREE.CircleGeometry(1.2, 12).rotateX(-Math.PI / 2), walker.kind === 'zombie' ? slime : blood)
   splat.position.set(walker.x, groundHeight(walker.x, walker.z) + 0.21, walker.z)
   scene.add(splat)
-  streetEl.textContent = 'Zombie geplet: +0,2 G-Point'
-  awardCoin(walker.x, walker.z, 0.2)
-}
+  streetEl.textContent = `${KINDS[walker.kind].label} geplet: +0,2 G-Point`
+  thud(0.8)
+    awardCoin(walker.x, walker.z, 0.2)
+    dirty(0.12)
+  }
 
 function runOver(walker) {
   walker.dead = true
@@ -1323,6 +1358,9 @@ function runOver(walker) {
     state.blood = 45
     state.bloodAt = [state.x, state.z]
   streetEl.textContent = 'Niet poep oprapende labradoodle uitlater overreden: +1 G-Point'
+  thud(1)
+  curse()
+  dirty(0.2)
   awardCoin(walker.x, walker.z)
 }
 
@@ -1470,6 +1508,7 @@ function pickUpPoop() {
   state.poo = 45
   state.pooAt = [state.x, state.z]
   streetEl.textContent = 'Door de drol gereden'
+  dirty(0.15)
 }
 
 function pooTrail(now) {
@@ -1498,12 +1537,14 @@ function updateInfection(now) {
     ...poops.map(poop => ({ x: poop.x, y: poop.y, z: poop.z, radius: Math.min(30, (now - poop.born) / 1000 * 0.4) }))
   ]
   const nearest = sources.map(source => ({ source, distance: Math.hypot(source.x - state.x, source.z - state.z) - source.radius })).sort((a, b) => a.distance - b.distance).slice(0, POOP_SLOTS)
-  poopUniform.value.forEach((slot, i) => {
-    const entry = nearest[i]
-    if (entry) slot.set(entry.source.x, entry.source.y, entry.source.z, entry.source.radius)
-    else slot.set(0, 0, 0, 0)
-  })
-}
+    poopUniform.value.forEach((slot, i) => {
+      const entry = nearest[i]
+      if (entry) slot.set(entry.source.x, entry.source.y, entry.source.z, entry.source.radius)
+      else slot.set(0, 0, 0, 0)
+    })
+    const stink = nearest.reduce((sum, entry) => sum + Math.max(0, Math.min(1, -entry.distance / Math.max(entry.source.radius, 1))), 0)
+    state.drunk += (Math.min(1, stink / 3) - state.drunk) * 0.02
+  }
 
 function explode(label) {
   const fireball = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), new THREE.MeshBasicMaterial({ color: 0xff7a1a, transparent: true }))
@@ -1517,6 +1558,7 @@ function explode(label) {
   }
   state.speed = 0
   state.shake = 3
+  thud(1.5)
   streetEl.textContent = `BOEM! ${label} geraakt`
   setTimeout(() => location.reload(), 2500)
 }
@@ -1704,6 +1746,157 @@ clearInterval(slideTimer)
 loadingEl.classList.add('done')
 setTimeout(() => loadingEl.remove(), 900)
 
+// HARDSTYLE:
+
+let audio, hardstyle, nextBeat = 0, beat = 0
+const NOTES = [220, 261.6, 329.6, 392, 329.6, 261.6, 220, 196]
+
+function startAudio() {
+  if (audio) return
+  audio = new AudioContext()
+  hardstyle = audio.createGain()
+  hardstyle.gain.value = 0
+  const drive = audio.createWaveShaper()
+  const curve = new Float32Array(1024)
+  for (let i = 0; i < 1024; i++) curve[i] = Math.tanh((i / 512 - 1) * 4)
+  drive.curve = curve
+  drive.connect(hardstyle)
+  hardstyle.connect(audio.destination)
+  nextBeat = audio.currentTime + 0.1
+  startSfx()
+  setInterval(() => {
+    while (nextBeat < audio.currentTime + 0.3) {
+      kick(nextBeat, drive)
+      if (beat % 2 === 1) lead(nextBeat, NOTES[(beat >> 1) % NOTES.length], drive)
+      nextBeat += 0.4
+      beat++
+    }
+  }, 100)
+}
+
+function kick(time, out) {
+  const osc = audio.createOscillator(), gain = audio.createGain()
+  osc.frequency.setValueAtTime(180, time)
+  osc.frequency.exponentialRampToValueAtTime(42, time + 0.18)
+  gain.gain.setValueAtTime(1.2, time)
+  gain.gain.exponentialRampToValueAtTime(0.001, time + 0.38)
+  osc.connect(gain).connect(out)
+  osc.start(time)
+  osc.stop(time + 0.4)
+}
+
+function lead(time, frequency, out) {
+  const osc = audio.createOscillator(), gain = audio.createGain(), filter = audio.createBiquadFilter()
+  osc.type = 'sawtooth'
+  osc.frequency.value = frequency
+  filter.type = 'lowpass'
+  filter.frequency.value = 1800
+  gain.gain.setValueAtTime(0.18, time)
+  gain.gain.exponentialRampToValueAtTime(0.001, time + 0.3)
+  osc.connect(filter).connect(gain).connect(out)
+  osc.start(time)
+  osc.stop(time + 0.32)
+}
+
+let engine, engineGain, sfx
+const CURSES = ['Godverdomme, kijk uit!', 'Hé, klootzak!', 'Mijn hond!', 'Wat doe je nou, eikel!', 'Ben je helemaal gek geworden!', 'Sjongejonge!']
+
+function startSfx() {
+  sfx = audio.createGain()
+  sfx.gain.value = 0.6
+  sfx.connect(audio.destination)
+  engine = audio.createOscillator()
+  engine.type = 'sawtooth'
+  const filter = audio.createBiquadFilter()
+  filter.type = 'lowpass'
+  filter.frequency.value = 400
+  engineGain = audio.createGain()
+  engineGain.gain.value = 0
+  engine.connect(filter).connect(engineGain).connect(sfx)
+  engine.start()
+}
+
+function updateEngine() {
+  if (!engine) return
+  const speed = Math.abs(state.speed)
+  const gear = Math.floor(speed / 9)
+  const revs = (speed - gear * 9) / 9
+  engine.frequency.setTargetAtTime(45 + revs * 70 + gear * 8, audio.currentTime, 0.05)
+  engineGain.gain.setTargetAtTime(0.05 + revs * 0.07 + (keys.has('ArrowUp') || keys.has('KeyW') ? 0.04 : 0), audio.currentTime, 0.1)
+}
+
+function thud(strength = 1) {
+  if (!sfx) return
+  const time = audio.currentTime
+  const buffer = audio.createBuffer(1, audio.sampleRate * 0.3, audio.sampleRate)
+  const data = buffer.getChannelData(0)
+  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length) ** 2
+  const noise = audio.createBufferSource(), gain = audio.createGain(), filter = audio.createBiquadFilter()
+  noise.buffer = buffer
+  filter.type = 'lowpass'
+  filter.frequency.value = 600
+  gain.gain.value = 0.9 * strength
+  noise.connect(filter).connect(gain).connect(sfx)
+  noise.start(time)
+  const osc = audio.createOscillator(), og = audio.createGain()
+  osc.frequency.setValueAtTime(90, time)
+  osc.frequency.exponentialRampToValueAtTime(30, time + 0.25)
+  og.gain.setValueAtTime(0.8 * strength, time)
+  og.gain.exponentialRampToValueAtTime(0.001, time + 0.3)
+  osc.connect(og).connect(sfx)
+  osc.start(time)
+  osc.stop(time + 0.3)
+}
+
+function bark(distance) {
+  if (!sfx) return
+  const time = audio.currentTime, level = Math.max(0, 1 - distance / 60) * 0.5
+  for (let k = 0; k < 2; k++) {
+    const osc = audio.createOscillator(), gain = audio.createGain(), filter = audio.createBiquadFilter()
+    osc.type = 'square'
+    osc.frequency.setValueAtTime(420, time + k * 0.22)
+    osc.frequency.exponentialRampToValueAtTime(260, time + k * 0.22 + 0.12)
+    filter.type = 'bandpass'
+    filter.frequency.value = 900
+    gain.gain.setValueAtTime(level, time + k * 0.22)
+    gain.gain.exponentialRampToValueAtTime(0.001, time + k * 0.22 + 0.14)
+    osc.connect(filter).connect(gain).connect(sfx)
+    osc.start(time + k * 0.22)
+    osc.stop(time + k * 0.22 + 0.15)
+  }
+}
+
+let barkTimer = 0
+function updateBarks(dt) {
+  barkTimer -= dt
+  if (barkTimer > 0) return
+  barkTimer = 1.5 + random() * 3
+  let nearest = Infinity
+  walkers.forEach(walker => { if (walker.kind === 'beagle' && !walker.dead) nearest = Math.min(nearest, Math.hypot(walker.x - state.x, walker.z - state.z)) })
+  if (nearest < 60) bark(nearest)
+}
+
+function curse() {
+  if (!('speechSynthesis' in window)) return
+  const line = new SpeechSynthesisUtterance(CURSES[Math.floor(Math.random() * CURSES.length)])
+  line.lang = 'nl-NL'
+  line.rate = 1.15
+  line.pitch = 0.8
+  const voice = speechSynthesis.getVoices().find(v => v.lang.startsWith('nl'))
+  if (voice) line.voice = voice
+  speechSynthesis.speak(line)
+}
+
+function updateHardstyle() {
+  if (!hardstyle) return
+  let nearest = Infinity
+  walkers.forEach(walker => { if (walker.kind === 'speakerboy' && !walker.dead) nearest = Math.min(nearest, Math.hypot(walker.x - state.x, walker.z - state.z)) })
+  const level = Math.max(0, 1 - nearest / 80) ** 2 * 0.45
+  hardstyle.gain.setTargetAtTime(level, audio.currentTime, 0.2)
+}
+
+addEventListener('keydown', startAudio, { once: true })
+
 // FAST TRAVEL:
 
 const travel = document.getElementById('travel')
@@ -1765,7 +1958,7 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight)
 })
 
-const state = { x: world.start.x, z: world.start.z, heading: world.start.heading, speed: 0, steer: 0, shake: 0 }
+const state = { x: world.start.x, z: world.start.z, heading: world.start.heading, speed: 0, steer: 0, shake: 0, drunk: 0 }
 const [minX, minZ, maxX, maxZ] = world.bounds
 const speedEl = document.getElementById('speed')
 const streetEl = document.getElementById('street')
@@ -1801,12 +1994,14 @@ function step(dt, now) {
 
   const yawRate = Math.min(speed * Math.tan(PANDA.steeringLock) / PANDA.wheelbase, PANDA.grip / Math.max(speed, 0.1))
   state.heading -= state.steer * yawRate * Math.sign(state.speed) * dt
+  state.heading += Math.sin(now * 0.0021) * 0.5 * state.drunk * Math.min(1, speed / 5) * dt
 
   const x = state.x + Math.sin(state.heading) * state.speed * dt
   const z = state.z + Math.cos(state.heading) * state.speed * dt
   const hit = corners(x, z, state.heading).some(([cx, cz]) => blocked(cx, cz))
 
   if (hit) {
+    if (Math.abs(state.speed) > 2) thud(Math.min(1, Math.abs(state.speed) / 15))
     state.shake = Math.min(Math.abs(state.speed) / 10, 1)
     state.speed *= -0.35
   } else {
@@ -1826,6 +2021,9 @@ function step(dt, now) {
   camera.position.lerp(target, 1 - Math.exp(-dt * 4))
   camera.position.y = Math.max(camera.position.y, terrainHeight(camera.position.x, camera.position.z) + 1.5) + (Math.random() - 0.5) * state.shake
   camera.lookAt(state.x, y + 1.2, state.z)
+  camera.rotation.z += Math.sin(now * 0.0027) * 0.14 * state.drunk
+  camera.fov = 60 + Math.sin(now * 0.0016) * 7 * state.drunk
+  camera.updateProjectionMatrix()
   state.shake *= 0.85
 
   sun.position.set(state.x + 150, y + 250, state.z + 100)
@@ -1844,6 +2042,9 @@ function step(dt, now) {
   pooTrail(now)
   updateInfection(now)
   updatePuffs(dt, now)
+  updateHardstyle()
+  updateEngine()
+  updateBarks(dt)
   bloodTrail()
       updateCoins(dt)
       updateTown(dt)
