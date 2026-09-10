@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
-import polygonClipping from 'polygon-clipping'
+
 
 const WORLD = new URLSearchParams(location.search).get('world') || 'sittard-geleen'
 
@@ -648,15 +648,15 @@ function buildRoads(groups) {
             else if (road.elevated) embankment(points, road.w, groups.ground)
           }
         })
-          buildRoadPolygons(groups)
-        }
+            indexRoadTiles()
+          }
 
 function bufferRing(points, width) {
   const sides = edges(points, width)
   const left = sides.map(([l]) => [l[0], l[2]]), right = sides.map(([, r]) => [r[0], r[2]])
   const cap = (center, from) => {
     const start = Math.atan2(from[1] - center[1], from[0] - center[0]), radius = width / 2, arc = []
-    for (let k = 1; k < 8; k++) arc.push([center[0] + Math.cos(start - k / 8 * Math.PI) * radius, center[1] + Math.sin(start - k / 8 * Math.PI) * radius])
+    for (let k = 1; k < 5; k++) arc.push([center[0] + Math.cos(start - k / 5 * Math.PI) * radius, center[1] + Math.sin(start - k / 5 * Math.PI) * radius])
     return arc
   }
   const last = points.length - 1
@@ -698,10 +698,11 @@ function curb(ring, top, bottom, parts) {
   parts.push(paint(skirt(upper, lower), COLORS.curb))
 }
 
-function buildRoadPolygons(groups) {
-  const tiles = new Map()
+const roadTiles = new Map(), builtRoadTiles = new Set()
+
+function indexRoadTiles() {
   world.roads.filter(road => road.kind === 'road' && !road.elevated && !road.bridge).forEach(road => {
-    const coarse = road.samples.filter((_, i) => i % 2 === 0 || i === road.samples.length - 1)
+    const coarse = road.samples.filter((_, i) => i % 3 === 0 || i === road.samples.length - 1)
     road.asphalt = [bufferRing(coarse, road.w)]
     road.walkway = road.w >= 5 && road.w <= 8 && !road.dual ? [bufferRing(coarse, road.w + 3.1)] : null
     const xs = road.samples.map(p => p[0]), zs = road.samples.map(p => p[1])
@@ -709,29 +710,60 @@ function buildRoadPolygons(groups) {
     for (let tx = Math.floor((Math.min(...xs) - margin) / TILE); tx <= Math.floor((Math.max(...xs) + margin) / TILE); tx++)
       for (let tz = Math.floor((Math.min(...zs) - margin) / TILE); tz <= Math.floor((Math.max(...zs) + margin) / TILE); tz++) {
         const key = `${tx},${tz}`
-        if (!tiles.has(key)) tiles.set(key, [])
-        tiles.get(key).push(road)
+        if (!roadTiles.has(key)) roadTiles.set(key, [])
+        roadTiles.get(key).push(road)
       }
   })
-  tiles.forEach((roads, key) => {
-    const [tx, tz] = key.split(',').map(Number)
-    const box = [[[tx * TILE, tz * TILE], [(tx + 1) * TILE, tz * TILE], [(tx + 1) * TILE, (tz + 1) * TILE], [tx * TILE, (tz + 1) * TILE], [tx * TILE, tz * TILE]]]
-    let asphalt, walkways
-    try {
-      asphalt = polygonClipping.union(...roads.map(road => road.asphalt))
-      const walks = roads.filter(road => road.walkway).map(road => road.walkway)
-      walkways = walks.length ? polygonClipping.difference(polygonClipping.intersection(polygonClipping.union(...walks), box), asphalt) : []
-      asphalt = polygonClipping.intersection(asphalt, box)
-    } catch (error) {
-      console.warn('road polygons failed for tile', key, error)
-      return
-    }
-    asphalt.forEach(polygon => groups.asphalt.push(polygonGeometry(polygon, 0.22, COLORS.road)))
-    walkways.forEach(polygon => {
-      groups.paving.push(polygonGeometry(polygon, 0.3, COLORS.sidewalk))
-      polygon.forEach(ring => curb(ring, 0.3, 0.16, groups.plain))
-    })
+}
+
+const roadWorker = new Worker('roadworker.js', { type: 'module' })
+const pendingRoadTiles = new Map()
+roadWorker.onmessage = ({ data }) => {
+  const resolve = pendingRoadTiles.get(data.key)
+  pendingRoadTiles.delete(data.key)
+  if (data.error) console.warn('road polygons failed for tile', data.key, data.error)
+  else placeRoadTile(data.asphalt, data.walkways)
+  if (resolve) resolve()
+}
+
+function buildRoadTile(key) {
+  builtRoadTiles.add(key)
+  const roads = roadTiles.get(key)
+  if (!roads) return Promise.resolve()
+  const [tx, tz] = key.split(',').map(Number)
+  const box = [[[tx * TILE - 1, tz * TILE - 1], [(tx + 1) * TILE + 1, tz * TILE - 1], [(tx + 1) * TILE + 1, (tz + 1) * TILE + 1], [tx * TILE - 1, (tz + 1) * TILE + 1], [tx * TILE - 1, tz * TILE - 1]]]
+  const started = performance.now()
+  return new Promise(resolve => {
+    pendingRoadTiles.set(key, () => { console.info(`tile ${key}: ${Math.round(performance.now() - started)} ms`); resolve() })
+    roadWorker.postMessage({ key, box, asphalt: roads.map(road => road.asphalt[0]), walkways: roads.filter(road => road.walkway).map(road => road.walkway[0]) })
   })
+}
+
+function placeRoadTile(asphalt, walkways) {
+  const place = (geometries, material, textured) => {
+    if (!geometries.length) return
+    const geometry = mergeGeometries(geometries)
+    if (textured) uvWorld(geometry)
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.receiveShadow = true
+    scene.add(mesh)
+  }
+  const curbs = []
+  place(asphalt.map(polygon => polygonGeometry(polygon, 0.22, COLORS.road)), MATERIALS.asphalt, true)
+  place(walkways.map(polygon => polygonGeometry(polygon, 0.3, COLORS.sidewalk)), MATERIALS.paving, true)
+  walkways.forEach(polygon => polygon.forEach(ring => curb(ring, 0.3, 0.16, curbs)))
+  place(curbs, MATERIALS.plain, false)
+}
+
+function streamRoadTiles(reach, budget) {
+  if (pendingRoadTiles.size) return []
+  const cx = Math.floor(state.x / TILE), cz = Math.floor(state.z / TILE)
+  const started = []
+  for (let dx = -reach; dx <= reach && budget > 0; dx++) for (let dz = -reach; dz <= reach && budget > 0; dz++) {
+    const key = `${cx + dx},${cz + dz}`
+    if (roadTiles.has(key) && !builtRoadTiles.has(key)) { started.push(buildRoadTile(key)); budget-- }
+  }
+  return started
 }
 
 function bridge(points, width, parts) {
@@ -1195,12 +1227,14 @@ function speakerboyGeometry() {
   box(parts, 0.5, 0.04, 0.04, 0x333333, 0, 1.02, 0.5)
   box(parts, 0.25, 0.05, 0.2, 0x222222, 0, 1.0, -0.15)
   for (const side of [-1, 1]) {
-    box(parts, 0.12, 0.5, 0.14, 0x2f3a4a, side * 0.12, 0.75, 0.05)
-    box(parts, 0.1, 0.42, 0.1, 0xff6a00, side * 0.22, 1.2, 0.25, -0.9)
-  }
-  box(parts, 0.34, 0.5, 0.22, 0xff6a00, 0, 1.3, -0.08)
-  box(parts, 0.2, 0.22, 0.2, 0xe8b894, 0, 1.68, -0.05)
-  box(parts, 0.26, 0.13, 0.28, 0x39ff14, 0, 1.84, -0.04)
+      box(parts, 0.12, 0.5, 0.14, 0x111111, side * 0.12, 0.75, 0.05)
+      box(parts, 0.1, 0.42, 0.1, 0x151515, side * 0.22, 1.2, 0.25, -0.9)
+    }
+    box(parts, 0.34, 0.5, 0.22, 0x151515, 0, 1.3, -0.08)
+    box(parts, 0.2, 0.22, 0.2, 0xe8b894, 0, 1.68, -0.05)
+    box(parts, 0.26, 0.13, 0.28, 0x1a1a1a, 0, 1.84, -0.04)
+    box(parts, 0.28, 0.1, 0.05, 0x1a1a1a, 0, 1.7, 0.06)
+    for (const side of [-1, 1]) box(parts, 0.1, 0.07, 0.06, 0x9fb7cc, side * 0.07, 1.7, 0.07)
   box(parts, 0.5, 0.3, 0.25, 0x111111, 0, 0.82, -0.65)
   box(parts, 0.42, 0.22, 0.03, 0x555555, 0, 0.82, -0.79)
   box(parts, 0.06, 0.06, 0.06, 0x2299ff, 0.18, 0.95, -0.78)
@@ -1234,7 +1268,14 @@ function buildWalkers() {
     }
   })
   const zones = world.zones || []
-  const zoneOf = ([x, z]) => zones.find(zone => inside(zone.p, x, z))
+  const zoneRaster = new Uint8Array(T.cols * T.rows)
+  zones.forEach((zone, index) => {
+    const xs = zone.p.map(p => p[0]), zs = zone.p.map(p => p[1])
+    const c0 = clamp(Math.floor((Math.min(...xs) - T.x0) / T.sx), 0, T.cols - 1), c1 = clamp(Math.ceil((Math.max(...xs) - T.x0) / T.sx), 0, T.cols - 1)
+    const r0 = clamp(Math.floor((Math.min(...zs) - T.z0) / T.sz), 0, T.rows - 1), r1 = clamp(Math.ceil((Math.max(...zs) - T.z0) / T.sz), 0, T.rows - 1)
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (!zoneRaster[r * T.cols + c] && inside(zone.p, T.x0 + c * T.sx, T.z0 + r * T.sz)) zoneRaster[r * T.cols + c] = index + 1
+  })
+  const zoneOf = ([x, z]) => zones[zoneRaster[clamp(Math.round((z - T.z0) / T.sz), 0, T.rows - 1) * T.cols + clamp(Math.round((x - T.x0) / T.sx), 0, T.cols - 1)] - 1]
   const fromStart = ([x, z]) => Math.hypot(x - world.start.x, z - world.start.z)
   const candidates = spots.sort(() => random() - 0.5).filter(spot => fromStart(spot) > 30 && !blocked(...spot))
   const chosen = new Set([...candidates.filter(spot => fromStart(spot) < 600).slice(0, 400), ...candidates.filter(spot => fromStart(spot) >= 600).slice(0, 600)])
@@ -1695,7 +1736,7 @@ function drawMinimap(dt) {
   }
   walkers.forEach(walker => {
     if (walker.dead || Math.abs(walker.x - state.x) > MAP_RADIUS || Math.abs(walker.z - state.z) > MAP_RADIUS) return
-    map.fillStyle = walker.kind === 'beagle' ? '#ff9f1a' : walker.kind === 'labradoodle' ? '#ffe28a' : walker.kind === 'baldman' ? '#ff4fd8' : '#4fd2ff'
+    map.fillStyle = walker.kind === 'beagle' ? '#ff9f1a' : walker.kind === 'labradoodle' ? '#ffe28a' : walker.kind === 'baldman' ? '#ff4fd8' : walker.kind === 'speakerboy' ? '#ff2bd6' : walker.kind === 'zombie' ? '#39ff14' : '#4fd2ff'
     map.beginPath()
     map.arc(walker.x, walker.z, 4, 0, Math.PI * 2)
     map.fill()
@@ -1741,10 +1782,78 @@ await phase('index', indexRoads)
 await buildWorld()
 const car = buildCar()
 await phase('walkers', buildWalkers)
-console.info(`ready: ${Math.round(performance.now())} ms`)
-clearInterval(slideTimer)
-loadingEl.classList.add('done')
-setTimeout(() => loadingEl.remove(), 900)
+
+// METAL INTRO:
+
+let metal, metalTimer, metalBeat = 0, metalNext = 0
+const RIFF = [[82.41, 1], [82.41, 1], [82.41, 0], [98, 1], [82.41, 1], [82.41, 0], [110, 1], [110, 1], [82.41, 1], [82.41, 0], [82.41, 1], [73.42, 1], [82.41, 1], [82.41, 0], [98, 1], [110, 1]]
+
+function startMetal() {
+  if (metal || !loadingEl.isConnected) return
+  startAudio()
+  metal = audio.createGain()
+  metal.gain.value = 0.5
+  const drive = audio.createWaveShaper()
+  const curve = new Float32Array(2048)
+  for (let i = 0; i < 2048; i++) curve[i] = Math.tanh((i / 1024 - 1) * 9)
+  drive.curve = curve
+  const tone = audio.createBiquadFilter()
+  tone.type = 'lowpass'
+  tone.frequency.value = 2800
+  drive.connect(tone).connect(metal).connect(audio.destination)
+  metalNext = audio.currentTime + 0.1
+  metalTimer = setInterval(() => {
+    while (metalNext < audio.currentTime + 0.3) {
+      const step = 60 / 140 / 4
+      const [note, hit] = RIFF[metalBeat % RIFF.length]
+      if (hit) chord(metalNext, note, step * 0.9, drive)
+      if (metalBeat % 8 === 0) kick(metalNext, drive)
+      if (metalBeat % 8 === 4) snare(metalNext, metal)
+      if (metalBeat % 2 === 0) hihat(metalNext, metal)
+      metalNext += step
+      metalBeat++
+    }
+  }, 80)
+}
+
+function chord(time, frequency, length, out) {
+  for (const ratio of [1, 1.5, 2.003]) {
+    const osc = audio.createOscillator(), gain = audio.createGain()
+    osc.type = 'sawtooth'
+    osc.frequency.value = frequency * ratio
+    gain.gain.setValueAtTime(0.5, time)
+    gain.gain.setValueAtTime(0.5, time + length * 0.6)
+    gain.gain.exponentialRampToValueAtTime(0.001, time + length)
+    osc.connect(gain).connect(out)
+    osc.start(time)
+    osc.stop(time + length + 0.02)
+  }
+}
+
+function noiseBurst(time, length, filterType, frequency, level, out) {
+  const buffer = audio.createBuffer(1, Math.ceil(audio.sampleRate * length), audio.sampleRate)
+  const data = buffer.getChannelData(0)
+  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length) ** 2
+  const source = audio.createBufferSource(), filter = audio.createBiquadFilter(), gain = audio.createGain()
+  source.buffer = buffer
+  filter.type = filterType
+  filter.frequency.value = frequency
+  gain.gain.value = level
+  source.connect(filter).connect(gain).connect(out)
+  source.start(time)
+}
+
+const snare = (time, out) => noiseBurst(time, 0.18, 'bandpass', 1800, 0.7, out)
+const hihat = (time, out) => noiseBurst(time, 0.05, 'highpass', 7000, 0.25, out)
+
+function stopMetal() {
+  if (!metal) return
+  clearInterval(metalTimer)
+  metal.gain.setTargetAtTime(0, audio.currentTime, 0.4)
+  setTimeout(() => metal.disconnect(), 2000)
+}
+
+addEventListener('keydown', startMetal, { once: true })
 
 // HARDSTYLE:
 
@@ -2037,6 +2146,7 @@ function step(dt, now) {
     streetTimer = 0.25
     streetEl.textContent = streetName(state.x, state.z)
   }
+  streamRoadTiles(2, 1)
   updateWalkers(dt, now)
   pickUpPoop()
   pooTrail(now)
@@ -2073,4 +2183,12 @@ function frame(now) {
   if (now > snapshotAt && Math.abs(state.speed) > 5) { snapshotAt = now + 45000; snapshot() }
   requestAnimationFrame(frame)
 }
+
+loadingPhase.textContent = 'Asfalt gieten…'
+await Promise.all(streamRoadTiles(0, 1))
+console.info(`ready: ${Math.round(performance.now())} ms`)
+clearInterval(slideTimer)
+stopMetal()
+loadingEl.classList.add('done')
+setTimeout(() => loadingEl.remove(), 900)
 requestAnimationFrame(frame)
