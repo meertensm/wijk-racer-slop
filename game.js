@@ -38,9 +38,9 @@ const scene = new THREE.Scene()
 scene.background = COLORS.horizon
 scene.fog = new THREE.Fog(COLORS.horizon, 400, 1600)
 
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.5, 5000)
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.5, 1900)
 const renderer = new THREE.WebGLRenderer({ antialias: true })
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5))
 renderer.setSize(innerWidth, innerHeight)
 renderer.shadowMap.enabled = true
 renderer.shadowMap.type = THREE.PCFSoftShadowMap
@@ -511,33 +511,53 @@ function buildWorld() {
   buildRoads(groups)
   buildBuildings(groups)
   for (const [name, parts] of Object.entries(groups)) {
-    if (!parts.length) continue
-    const geometries = parts.map(part => {
+    const tiles = new Map()
+    parts.forEach(part => {
       const geometry = part.index ? part.toNonIndexed() : part
       if (name === 'plain') geometry.deleteAttribute('uv')
       else if (!geometry.attributes.uv) uvWorld(geometry)
-      return geometry
+      geometry.computeBoundingBox()
+      const center = geometry.boundingBox.getCenter(new THREE.Vector3())
+      const key = tileKey(center.x, center.z)
+      if (!tiles.has(key)) tiles.set(key, [])
+      tiles.get(key).push(geometry)
     })
-    const mesh = new THREE.Mesh(mergeGeometries(geometries), MATERIALS[name])
-    mesh.castShadow = mesh.receiveShadow = true
-    scene.add(mesh)
+    tiles.forEach(geometries => {
+      const mesh = new THREE.Mesh(mergeGeometries(geometries), MATERIALS[name])
+      mesh.castShadow = mesh.receiveShadow = true
+      scene.add(mesh)
+    })
   }
   buildGround()
   buildTrees()
   buildSky()
 }
 
-function instances(geometry, color, placements, map, variation = 0) {
-  const mesh = new THREE.InstancedMesh(geometry, solid(color, map), placements.length)
+const TILE = 400
+const tileKey = (x, z) => `${Math.floor(x / TILE)},${Math.floor(z / TILE)}`
+
+function instances(geometry, color, placements, map, variation = 0, tiled = true) {
+  const material = solid(color, map)
+  const tiles = new Map()
+  placements.forEach(placement => {
+    const key = tiled ? tileKey(placement[0], placement[2]) : 'all'
+    if (!tiles.has(key)) tiles.set(key, [])
+    tiles.get(key).push(placement)
+  })
   const matrix = new THREE.Matrix4()
   const tint = new THREE.Color()
-  placements.forEach(([x, y, z, scale, rotation], i) => {
-    matrix.makeRotationY(rotation || 0).scale(new THREE.Vector3(scale, scale, scale)).setPosition(x, y, z)
-    mesh.setMatrixAt(i, matrix)
-    if (variation) mesh.setColorAt(i, tint.setHSL(0.28 + (random() - 0.5) * variation, 0.5 + random() * 0.2, 0.35 + random() * 0.15))
+  let mesh
+  tiles.forEach(list => {
+    mesh = new THREE.InstancedMesh(geometry, material, list.length)
+    list.forEach(([x, y, z, scale, rotation], i) => {
+      matrix.makeRotationY(rotation || 0).scale(new THREE.Vector3(scale, scale, scale)).setPosition(x, y, z)
+      mesh.setMatrixAt(i, matrix)
+      if (variation) mesh.setColorAt(i, tint.setHSL(0.28 + (random() - 0.5) * variation, 0.5 + random() * 0.2, 0.35 + random() * 0.15))
+    })
+    mesh.computeBoundingSphere()
+    mesh.castShadow = true
+    scene.add(mesh)
   })
-  mesh.castShadow = true
-  scene.add(mesh)
   return mesh
 }
 
@@ -554,11 +574,11 @@ function buildTrees() {
 let skyDome, clouds
 
 function buildSky() {
-  const sky = new THREE.SphereGeometry(2400, 24, 12)
+  const sky = new THREE.SphereGeometry(1800, 24, 12)
   const colors = new Float32Array(sky.attributes.position.count * 3)
   const color = new THREE.Color()
   for (let i = 0; i < sky.attributes.position.count; i++) {
-    color.copy(COLORS.horizon).lerp(COLORS.zenith, Math.sqrt(Math.max(0, sky.attributes.position.getY(i) / 2400)))
+    color.copy(COLORS.horizon).lerp(COLORS.zenith, Math.sqrt(Math.max(0, sky.attributes.position.getY(i) / 1800)))
     colors.set([color.r, color.g, color.b], i * 3)
   }
   sky.setAttribute('color', new THREE.BufferAttribute(colors, 3))
@@ -571,7 +591,7 @@ function buildSky() {
     const x = ((Math.sin(i * 12.9898) * 43758.5453) % 1) * 3000, z = ((Math.sin(i * 78.233) * 12345.678) % 1) * 3000
     for (let k = 0; k < 3; k++) blobs.push([x + k * 22 - 22, 0, z + (k % 2) * 12, 14 + (i % 5) * 4, 0])
   }
-  clouds = instances(new THREE.IcosahedronGeometry(1, 1).scale(1, 0.45, 1).translate(0, 9, 0), 0xffffff, blobs)
+  clouds = instances(new THREE.IcosahedronGeometry(1, 1).scale(1, 0.45, 1).translate(0, 9, 0), 0xffffff, blobs, null, 0, false)
   clouds.material.fog = false
   clouds.material.userData.outlineParameters = { visible: false }
   clouds.castShadow = false
@@ -723,6 +743,7 @@ function buildWalkers() {
 
 function updateWalkers(dt, now) {
   walkers.forEach(walker => {
+    if (walker.dead) return
     const kind = KINDS[walker.kind]
     walker.timer -= dt
     if (walker.timer < 0) {
@@ -744,8 +765,42 @@ function updateWalkers(dt, now) {
     walker.mesh.rotation.y = walker.heading
     const hits = [[walker.x, walker.z]]
     if (walker.kind === 'dogwalker') hits.push([walker.x + Math.sin(walker.heading) * 1.1, walker.z + Math.cos(walker.heading) * 1.1])
-    if (!explosion && hits.some(([hx, hz]) => Math.hypot(hx - state.x, hz - state.z) < 1.6)) explode(kind.label)
+    if (!explosion && hits.some(([hx, hz]) => Math.hypot(hx - state.x, hz - state.z) < 1.6)) walker.kind === 'dogwalker' ? runOver(walker) : explode(kind.label)
   })
+}
+
+const blood = new THREE.MeshBasicMaterial({ color: 0x7a0c0c, transparent: true, opacity: 0.9 })
+blood.userData.outlineParameters = { visible: false }
+
+function runOver(walker) {
+  walker.dead = true
+  walker.mesh.rotation.set(Math.PI / 2, walker.heading, 0)
+  walker.mesh.scale.y = 0.4
+  walker.mesh.position.y = groundHeight(walker.x, walker.z) + 0.15
+  const splat = new THREE.Mesh(new THREE.CircleGeometry(1.4, 12).rotateX(-Math.PI / 2), blood)
+  splat.position.set(walker.x, groundHeight(walker.x, walker.z) + 0.21, walker.z)
+  scene.add(splat)
+  state.blood = 45
+  state.bloodAt = [state.x, state.z]
+  streetEl.textContent = 'Man met labradoodle overreden'
+}
+
+function bloodTrail() {
+  if (!(state.blood > 0)) return
+  const travelled = Math.hypot(state.x - state.bloodAt[0], state.z - state.bloodAt[1])
+  if (travelled < 1.2) return
+  state.bloodAt = [state.x, state.z]
+  state.blood -= travelled
+  const material = blood.clone()
+  material.opacity = 0.85 * state.blood / 45
+  for (const side of [-1, 1]) {
+    const x = state.x + Math.cos(state.heading) * side * 0.66 - Math.sin(state.heading) * 1.1
+    const z = state.z - Math.sin(state.heading) * side * 0.66 - Math.cos(state.heading) * 1.1
+    const smear = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 1.5).rotateX(-Math.PI / 2), material)
+    smear.position.set(x, groundHeight(x, z) + 0.22, z)
+    smear.rotation.y = state.heading
+    scene.add(smear)
+  }
 }
 
 function explode(label) {
@@ -1007,6 +1062,7 @@ function step(dt, now) {
     streetEl.textContent = streetName(state.x, state.z)
   }
   updateWalkers(dt, now)
+  bloodTrail()
   drawMinimap()
 }
 
