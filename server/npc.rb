@@ -5,8 +5,10 @@ class Npc < Entity
   LABEL  = 'Npc'
   IDLE   = 0.3
   PACE   = 0.8..1.4
+  GENDERS = %i[male]
+  MOODS   = %i[angry]
 
-  attr_reader :speed, :version, :dead, :dead_at, :killer, :home
+  attr_reader :speed, :version, :dead, :dead_at, :killer, :home, :voice
 
   def initialize(id, x, z, heading, world, random)
     super(id, x, z, heading)
@@ -17,6 +19,8 @@ class Npc < Entity
     @timer   = 0.0
     @version = 0
     @dead    = false
+    @voice   = Voice.new(self.class::GENDERS.sample(random: random), self.class::MOODS.sample(random: random))
+    @chatted = -100.0
   end
 
   def kind
@@ -42,7 +46,19 @@ class Npc < Entity
     end
     @timer -= dt
     decide(game) if @timer.negative?
+    say(game) if game.now - @chatted > 8 && chatty?(game)
     move(dt)
+  end
+
+  def chatty?(game)
+    rand < 0.02 && game.nearest_player(x, z, 40)
+  end
+
+  def say(game)
+    lines = game.lines_for(self)
+    return if lines.empty?
+    @chatted = game.now
+    game.say(self, (rand * lines.length).floor)
   end
 
   def decide(_game)
@@ -76,6 +92,8 @@ class Npc < Entity
     @speed   = 0.0
     touch
     game.kill(self, player)
+    @chatted = -100.0
+    say(game)
   end
 
   def revive
@@ -97,7 +115,7 @@ class Npc < Entity
   end
 
   def to_row
-    [id, kind_index, x.round(2), z.round(2), heading.round(3), speed.round(2), dead ? 1 : 0]
+    [id, kind_index, x.round(2), z.round(2), heading.round(3), speed.round(2), dead ? 1 : 0, voice.code]
   end
 
   private

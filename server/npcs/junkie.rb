@@ -3,6 +3,8 @@ class Junkie < HumanoidNpc
   REWARD = 0.2
   IDLE   = 0.2
   PACE   = 1.6..2.8
+  GENDERS = %i[male female]
+  MOODS   = %i[angry happy]
 
   def decide(game)
     super

@@ -2,10 +2,11 @@ class Game
   TICK, NET, RANGE, DROP, ACTIVE = 0.05, 0.1, 600, 660, 700
   attr_reader :inbox, :now, :world, :npcs
 
-  def initialize(world, npcs, scores)
+  def initialize(world, npcs, scores, voices = {})
     @world   = world
     @npcs    = npcs
     @scores  = scores
+    @voices  = voices
     @inbox   = Thread::Queue.new
     @players = {}
     @poops   = []
@@ -36,6 +37,14 @@ class Game
     events << ['score', player.id, 0]
   end
 
+  def lines_for(npc)
+    voices.dig(npc.kind, npc.voice.mood.to_s) || []
+  end
+
+  def say(npc, index)
+    events << ['say', npc.id, index]
+  end
+
   def award(player, amount, npc, stage)
     scores.award(player.name, amount)
     events << ['combo', npc.id, player.id, stage]
@@ -51,7 +60,7 @@ class Game
 
   private
 
-  attr_reader :scores, :players, :poops, :events
+  attr_reader :scores, :players, :poops, :events, :voices
 
   def run
     last = clock

@@ -21,7 +21,6 @@ let audio, hardstyle, nextBeat = 0, beat = 0, engine, engineGain, sfx, metal, me
 const RIFF = [[82.41, 1], [82.41, 1], [82.41, 0], [98, 1], [82.41, 1], [82.41, 0], [110, 1], [110, 1], [82.41, 1], [82.41, 0], [82.41, 1], [73.42, 1], [82.41, 1], [82.41, 0], [98, 1], [110, 1]]
 const NOTES = [220, 261.6, 329.6, 392, 329.6, 261.6, 220, 196]
 const VOICES = await fetch('assets/voices.json').then(response => response.json())
-let lastGodver = 0, lastShout = 0
 addEventListener('keydown', () => startMetal(), { once: true })
 const loadingEl = document.getElementById('loading')
 const loadingBar = loadingEl.querySelector('#loading-bar i')
@@ -1417,11 +1416,11 @@ function placeNpc(npc, bob) {
 function applySnapshot({ npcs: rows = [], gone = [] }) {
   gone.forEach(removeNpc)
   const at = performance.now()
-  rows.forEach(([id, kindIndex, x, z, heading, speed, dead]) => {
+  rows.forEach(([id, kindIndex, x, z, heading, speed, dead, voice]) => {
     const kind = KIND_NAMES[kindIndex]
     let npc = npcs.get(id)
     if (!npc) {
-      npc = { id, kind, x, z, heading, speed, dead: false, index: allocSlot(kind), splat: null }
+      npc = { id, kind, x, z, heading, speed, dead: false, voice, index: allocSlot(kind), splat: null }
       npcs.set(id, npc)
     }
     if (Math.hypot(npc.x - x, npc.z - z) > 20) { npc.x = x; npc.z = z; npc.heading = heading }
@@ -1457,8 +1456,6 @@ function updateNpcs(dt, now) {
     if (npc.dead) return
     const distance = Math.hypot(npc.x - state.x, npc.z - state.z)
     nearest[npc.kind] = Math.min(nearest[npc.kind], distance)
-    if (npc.kind.startsWith('bald') && distance < 12 && Math.abs(state.speed) > 6 && now - lastGodver > 6000) { lastGodver = now; curse(npc.kind === 'baldflag' ? 'brabant' : 'godver') }
-    if (npc.kind === 'speakerboy' && distance < 40 && now - lastShout > 9000) { lastShout = now; curse('speakerboy') }
     if (!explosion && distance < 1.6) contact(npc, perf)
   })
 }
@@ -1502,9 +1499,7 @@ function killEffects(npc) {
   streetEl.textContent = gerard ? 'Niet poep oprapende labradoodle uitlater overreden: +1 coin' : `${KINDS[npc.kind].label} geplet: +${reward.toLocaleString('nl-NL')} coin`
   thud(gerard ? 1 : 0.8)
   scream(gerard ? 'man' : npc.kind)
-  if (gerard) { setTimeout(() => curse('gerard'), 700); state.blood = 45; state.bloodAt = [state.x, state.z] }
-  if (npc.kind.startsWith('bald')) setTimeout(() => curse(npc.kind === 'baldflag' ? 'brabant' : 'godver'), 500)
-  if (npc.kind === 'speakerboy') curse('speakerboy')
+  if (gerard) { state.blood = 45; state.bloodAt = [state.x, state.z] }
   dirty(gerard ? 0.2 : 0.12)
   spawnCoin(npc.x, npc.z)
 }
@@ -2271,14 +2266,16 @@ function updateBarks(dt) {
   if (nearest.beagle < 60) bark(nearest.beagle)
 }
 
-async function curse(set) {
-  const lines = VOICES[set].lines, index = Math.floor(Math.random() * lines.length)
-  if (await playSample(`voice-${set}-${index + 1}`, { level: 1.2 })) return
+async function speak(npc, index) {
+  const gender = npc.voice & 2 ? 'female' : 'male', mood = npc.voice & 1 ? 'happy' : 'angry'
+  const lines = VOICES.npcs[npc.kind]?.[mood] || []
+  if (!lines[index]) return
+  if (await playSample(`voice-${npc.kind}-${gender}-${mood}-${index + 1}`, { level: 1.2 })) return
   if (!('speechSynthesis' in window)) return
   const line = new SpeechSynthesisUtterance(lines[index])
   line.lang = 'nl-NL'
-  line.rate = 1.1 + Math.random() * 0.15
-  line.pitch = set === 'speakerboy' ? 1.6 : set === 'gerard' ? 0.8 : 0.6
+  line.rate = mood === 'angry' ? 1.2 + Math.random() * 0.15 : 1
+  line.pitch = (gender === 'female' ? 1.3 : npc.kind === 'speakerboy' ? 1.6 : 0.7) + (mood === 'happy' ? 0.2 : 0)
   line.volume = 1
   const voice = speechSynthesis.getVoices().find(v => v.lang.startsWith('nl'))
   if (voice) line.voice = voice
@@ -2490,6 +2487,11 @@ const EVENTS = {
   unpoop(id, by) {
     if (by === myId && poops.has(id)) stepInPoop()
     removePoop(id)
+  },
+  say(id, index) {
+    const npc = npcs.get(id)
+    if (!npc || Math.hypot(npc.x - state.x, npc.z - state.z) > 60) return
+    setTimeout(() => speak(npc, index), npc.dead ? 700 : 0)
   }
 }
 

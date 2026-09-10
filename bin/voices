@@ -5,29 +5,44 @@ require 'net/http'
 key    = ENV.fetch('AZURE_SPEECH_KEY') { abort 'Set AZURE_SPEECH_KEY (and optionally AZURE_SPEECH_REGION, default westeurope)' }
 region = ENV.fetch('AZURE_SPEECH_REGION', 'westeurope')
 root   = File.expand_path('..', __dir__)
-sets   = JSON.parse(File.read("#{root}/assets/voices.json"))
+voices = JSON.parse(File.read("#{root}/assets/voices.json", encoding: 'UTF-8'))
+
+VOICES = { 'male' => 'nl-NL-MaartenNeural', 'female' => 'nl-NL-FennaNeural' }
+MOODS  = {
+  'angry' => { rate: '+25%', pitch: '+10%', volume: '+60%', emphasis: 'strong' },
+  'happy' => { rate: '+5%',  pitch: '+15%', volume: '+20%', emphasis: 'moderate' }
+}
 
 http = Net::HTTP.new("#{region}.tts.speech.microsoft.com", 443)
 http.use_ssl = true
 
-sets.each do |set, style|
-  style['lines'].each_with_index do |text, index|
-    path = "#{root}/assets/sounds/#{style['file'] || "voice-#{set}-"}#{index + 1}.mp3"
-    next if File.exist?(path)
+render = lambda do |path, voice, text, rate:, pitch:, volume:, emphasis: 'strong'|
+  next if File.exist?(path)
+  ssml = <<~SSML
+    <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="#{voice[/^[a-z]+-[A-Z]+/]}">
+      <voice name="#{voice}"><prosody rate="#{rate}" pitch="#{pitch}" volume="#{volume}"><emphasis level="#{emphasis}">#{text.encode(xml: :text)}</emphasis></prosody></voice>
+    </speak>
+  SSML
+  request = Net::HTTP::Post.new('/cognitiveservices/v1', 'Ocp-Apim-Subscription-Key' => key, 'Content-Type' => 'application/ssml+xml', 'X-Microsoft-OutputFormat' => 'audio-24khz-96kbitrate-mono-mp3', 'User-Agent' => 'wijk-racer')
+  request.body = ssml
+  response = http.request(request)
+  abort "#{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
+  File.binwrite(path, response.body)
+  puts path
+end
 
-    lang = style['voice'][/^[a-z]+-[A-Z]+/]
-    ssml = <<~SSML
-      <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="#{lang}">
-        <voice name="#{style['voice']}">
-          <prosody rate="#{style['rate']}" pitch="#{style['pitch']}" volume="#{style['volume']}"><emphasis level="strong">#{text.encode(xml: :text)}</emphasis></prosody>
-        </voice>
-      </speak>
-    SSML
-    request = Net::HTTP::Post.new('/cognitiveservices/v1', 'Ocp-Apim-Subscription-Key' => key, 'Content-Type' => 'application/ssml+xml', 'X-Microsoft-OutputFormat' => 'audio-24khz-96kbitrate-mono-mp3', 'User-Agent' => 'wijk-racer')
-    request.body = ssml
-    response = http.request(request)
-    abort "#{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
-    File.binwrite(path, response.body)
-    puts path
+voices['npcs'].each do |kind, set|
+  set['genders'].each do |gender|
+    MOODS.each do |mood, style|
+      (set[mood] || []).each_with_index do |text, index|
+        render.call("#{root}/assets/sounds/voice-#{kind}-#{gender}-#{mood}-#{index + 1}.mp3", set['voice'] || VOICES.fetch(gender), text, **style)
+      end
+    end
+  end
+end
+
+voices['effects'].each do |_name, set|
+  set['lines'].each_with_index do |text, index|
+    render.call("#{root}/assets/sounds/#{set['file']}#{index + 1}.mp3", set['voice'], text, rate: set['rate'], pitch: set['pitch'], volume: set['volume'])
   end
 end
