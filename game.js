@@ -1049,14 +1049,7 @@ function cutAlong(polygon, f, spacing) {
 
 const GRID_LINES = [p => p[0], p => p[1], p => p[0] + p[1]]
 
-function planarGround([a, b, c]) {
-  const ha = terrainHeight(a[0], a[1]), hb = terrainHeight(b[0], b[1]), hc = terrainHeight(c[0], c[1])
-  const probes = [[(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (ha + hb) / 2], [(b[0] + c[0]) / 2, (b[1] + c[1]) / 2, (hb + hc) / 2], [(c[0] + a[0]) / 2, (c[1] + a[1]) / 2, (hc + ha) / 2], [(a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3, (ha + hb + hc) / 3]]
-  return probes.every(([x, z, expected]) => Math.abs(terrainHeight(x, z) - expected) < 0.05)
-}
-
 function groundPieces(triangle) {
-  if (planarGround(triangle)) return [triangle]
   const step = tileAt(triangle[0][0], triangle[0][1])?.grid.step || 10
   let pieces = [triangle]
   for (const f of GRID_LINES) pieces = pieces.flatMap(piece => cutAlong(piece, f, step))
