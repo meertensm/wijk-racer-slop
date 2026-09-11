@@ -9,7 +9,9 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 const TIPS = [
   'Rij een niet poep oprapende labradoodle uitlater omver voor een coin.',
   'Binnen 5 seconden achteruit en weer vooruit over hem heen: twee halve coins extra.',
-  'De labradoodle is onsterfelijk en rent weg. Beagles ook onsterfelijk, maar dan ontploft jouw Panda.',
+  'De labradoodle is onsterfelijk en rent weg. Raak een beagle en je Panda ontploft: al je coins weg.',
+  'Elke kill is een coin, Speakerboy is er vijf waard, een drol oprapen een halve.',
+  'Kort op Shift tikken is turbo: vijf seconden vlammen voor vijf coins.',
   'In Einighausen lopen alleen kale mannetjes rond.',
   'Druk op T om naar een supermarkt, skatebaan of station te springen.',
   'Bij het eet.nu-kantoor aan de Brugstraat staat iemand voor de deur.',
@@ -2060,15 +2062,20 @@ function buildCar() {
       mesh.userData.rotation = mesh.rotation.clone()
     }
   }
-  flame = new THREE.Mesh(new THREE.ConeGeometry(0.16, 1.1, 8).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xff8a1a, transparent: true, opacity: 0.85 }))
-  flame.material.userData.outlineParameters = { visible: false }
-  flame.position.set(-0.45, 0.4, -2.25)
-  flame.visible = false
-  flame.userData.position = flame.position.clone()
-  flame.userData.rotation = flame.rotation.clone()
-  car.add(flame)
+  flame = turboFlame(car)
   scene.add(car)
   return car
+}
+
+function turboFlame(group) {
+  const mesh = new THREE.Mesh(new THREE.ConeGeometry(0.16, 1.1, 8).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xff8a1a, transparent: true, opacity: 0.85 }))
+  mesh.material.userData.outlineParameters = { visible: false }
+  mesh.position.set(-0.45, 0.4, -2.25)
+  mesh.visible = false
+  mesh.userData.position = mesh.position.clone()
+  mesh.userData.rotation = mesh.rotation.clone()
+  group.add(mesh)
+  return mesh
 }
 
 // WALKERS:
@@ -2543,7 +2550,7 @@ function pickUpPoop() {
 function stepInPoop() {
   state.poo = 45
   state.pooAt = [state.x, state.z]
-  streetEl.textContent = 'Door de drol gereden'
+  streetEl.textContent = 'Door de drol gereden: +½ coin'
   dirty(0.15)
 }
 
@@ -3345,7 +3352,7 @@ function applyPlayers(rows) {
       group.add(label)
       group.position.set(x, terrainHeight(x, z), z)
       scene.add(group)
-      other = { group, label, name, score: playerScore, target: { x, z, heading } }
+      other = { group, label, name, score: playerScore, target: { x, z, heading }, flame: turboFlame(group) }
       others.set(id, other)
       changed = true
     }
@@ -3378,6 +3385,7 @@ const EVENTS = {
     explosion.confirmed = true
   },
   respawn(player) { if (player === myId) respawn() },
+  turbo(player) { const other = others.get(player); if (other) other.turboUntil = performance.now() + 5000 },
   score(player, value) { if (player === myId) showScore(value) },
   poop(...row) { addPoop(row) },
   unpoop(id, by) {
@@ -3428,6 +3436,8 @@ function updateMultiplayer(dt, now) {
       const size = Math.max(1, Math.hypot(group.position.x - state.x, group.position.z - state.z) / 30)
       other.label.scale.set(4 * size, size, 1)
       other.label.position.y = 2.6 + (size - 1) * 1.2
+      other.flame.visible = now < (other.turboUntil || 0)
+      if (other.flame.visible) other.flame.scale.set(0.7 + Math.random() * 0.6, 0.7 + Math.random() * 0.6, 0.6 + Math.random() * 0.9)
     })
 }
 
@@ -3525,10 +3535,12 @@ addEventListener('keyup', event => {
 function startTurbo() {
   const now = performance.now()
   if (now < (state.turboReadyAt || 0) || explosion) return
+  if (score < 5) { streetEl.textContent = 'Turbo kost 5 coins'; return }
   state.turboUntil = now + 5000
   state.turboReadyAt = now + 15000
-  streetEl.textContent = 'TURBO!'
+  streetEl.textContent = 'TURBO! (-5 coins)'
   thud(0.4)
+  send({ turbo: true })
 }
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight

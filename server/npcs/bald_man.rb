@@ -1,6 +1,6 @@
 class BaldMan < HumanoidNpc
   LABEL  = 'Kale man'
-  REWARD = 0.1
+  REWARD = 1
   LINES = {
     angry: [
       'GODVERDOMME!',

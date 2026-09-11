@@ -1,6 +1,6 @@
 class Zombie < HumanoidNpc
   LABEL  = 'Zombie'
-  REWARD = 0.2
+  REWARD = 1
   IDLE   = 0
   PACE   = 0.6..0.6
 

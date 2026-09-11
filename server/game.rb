@@ -1,5 +1,6 @@
 class Game
   TICK, NET, RANGE, DROP, ACTIVE, INTEREST, KEEP = 0.05, 0.1, 600, 660, 700, 1, 2
+  TURBO_PRICE, POOP_REWARD = 5, 0.5
   attr_reader :inbox, :now, :world, :crowd, :store
 
   def initialize(world, store, scores)
@@ -139,6 +140,7 @@ class Game
     elsif (player = client.player)
       move_player(player, *message['pos']) if message['pos'].is_a?(Array)
       player.rename(message['name']) if message.key?('name')
+      turbo(player) if message['turbo']
     end
   end
 
@@ -154,6 +156,13 @@ class Game
     client.send('welcome' => { 'id' => player.id, 'world' => world.name, 'start' => world.start, 'origin' => Limburg::ORIGIN, 'tileSize' => Tile::SIZE, 'tileVersion' => Tile::VERSION, 'kinds' => Npc::KINDS, 'npcs' => Population::CLASSES.transform_values(&:describe), 'score' => scores[player.name], 't' => now.round(2), 'poops' => poops.map(&:to_row) })
   end
 
+  def turbo(player)
+    return unless player.alive? && scores[player.name] >= TURBO_PRICE
+    scores.award(player.name, -TURBO_PRICE)
+    events << ['turbo', player.id]
+    events << ['score', player.id, scores[player.name]]
+  end
+
   def leave(client)
     players.delete(client.id) && events << ['left', client.id]
   end
@@ -166,7 +175,12 @@ class Game
     from = [player.car.x, player.car.z]
     player.car.move(x.to_f, z.to_f, heading, speed)
     return if !player.alive? || Math.hypot(x - from[0], z - from[1]) > 30
-    poops.reject! { |poop| poop.near?(player.car.x, player.car.z, 1.4) && events << ['unpoop', poop.id, player.id] }
+    poops.reject! do |poop|
+      next false unless poop.near?(player.car.x, player.car.z, 1.4)
+      scores.award(player.name, POOP_REWARD)
+      events << ['unpoop', poop.id, player.id]
+      events << ['score', player.id, scores[player.name]]
+    end
     crowd.near(x, z, 40).each do |npc|
       npc.combo(player, self) if npc.dead && npc.is_a?(DogWalker) && npc.near?(x, z, 10)
       next if npc.dead

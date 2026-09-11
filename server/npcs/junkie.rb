@@ -1,6 +1,6 @@
 class Junkie < HumanoidNpc
   LABEL  = 'Junk'
-  REWARD = 0.2
+  REWARD = 1
   IDLE   = 0.2
   PACE   = 1.6..2.8
   GENDERS = %i[male female]
