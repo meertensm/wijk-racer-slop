@@ -2,15 +2,14 @@
 $stdout.sync = true
 root = File.expand_path('..', __dir__)
 Dir.chdir(root)
-%w[geometry limburg tiles/projection tiles/tile tiles/tile_store tiles/nominatim tiles/boundary tiles/overpass tiles/ahn tiles/terrain tiles/scatter tiles/signs tiles/landmarks tiles/tile_builder tiles/tile_generator tiles/world_slicer tiles/tile_source].each { |file| require "#{root}/server/#{file}" }
+%w[geometry limburg tiles/projection tiles/tile tiles/tile_store tiles/nominatim tiles/boundary tiles/overpass tiles/ahn tiles/terrain tiles/scatter tiles/signs tiles/landmarks tiles/tile_builder tiles/tile_generator].each { |file| require "#{root}/server/#{file}" }
 
 address, radius = ARGV
 abort 'usage: bin/generate "ADRES" STRAAL_KM' unless radius
 projection = Projection.new(*Limburg::ORIGIN)
 nominatim  = Nominatim.new('data/geo')
 generator  = TileGenerator.new(projection, Boundary.new(projection, nominatim.relation(Limburg::RELATION)), Overpass.new, Ahn.new)
-slicer     = File.exist?('worlds/sittard-geleen.json') ? WorldSlicer.new('worlds/sittard-geleen.json') : nil
-store      = TileStore.new("data/tiles/#{Tile::VERSION}", TileSource.new(slicer, generator))
+store      = TileStore.new("data/tiles/#{Tile::VERSION}", generator)
 tx, tz     = Tile.key(*projection.project(*nominatim.geocode(address)))
 reach      = (radius.to_f / Tile::SIZE * 1000).ceil
 keys       = (-reach..reach).flat_map { |dx| (-reach..reach).map { |dz| [tx + dx, tz + dz] } }.sort_by { |kx, kz| Math.hypot(kx - tx, kz - tz) }

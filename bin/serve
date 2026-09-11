@@ -6,16 +6,15 @@ Dir.chdir(root)
   geometry grid entity entities/structure entities/road entities/plant entities/vehicle entities/zone entities/spot entities/place entities/poop
   world voice npc npcs/humanoid_npc npcs/beagle npcs/labradoodle npcs/dog_walker npcs/bald_man npcs/zwerver npcs/junkie npcs/zombie npcs/speakerboy npcs/tattoo_man
   population player scores game http_request static web_socket client server crowd zones tiles/prefetcher
-  limburg tiles/projection tiles/tile tiles/tile_store tiles/world_slicer tiles/tile_endpoint tiles/nominatim start
-  tiles/boundary tiles/overpass tiles/ahn tiles/terrain tiles/scatter tiles/signs tiles/landmarks tiles/tile_builder tiles/tile_generator tiles/tile_source
+  limburg tiles/projection tiles/tile tiles/tile_store tiles/tile_endpoint tiles/nominatim start
+  tiles/boundary tiles/overpass tiles/ahn tiles/terrain tiles/scatter tiles/signs tiles/landmarks tiles/tile_builder tiles/tile_generator
 ].each { |file| require "#{root}/server/#{file}" }
 
 address    = ARGV[1] || Limburg::ADDRESS
 projection = Projection.new(*Limburg::ORIGIN)
 nominatim  = Nominatim.new('data/geo')
-slicer     = WorldSlicer.new('worlds/sittard-geleen.json')
 generator  = TileGenerator.new(projection, Boundary.new(projection, nominatim.relation(Limburg::RELATION)), Overpass.new, Ahn.new)
-store      = TileStore.new("data/tiles/#{Tile::VERSION}", TileSource.new(slicer, generator))
+store      = TileStore.new("data/tiles/#{Tile::VERSION}", generator)
 tx, tz     = Tile.key(*projection.project(*nominatim.geocode(address)))
 keys       = (-1..1).flat_map { |dx| (-1..1).map { |dz| [tx + dx, tz + dz] } }
 keys.each { |key| store.request(*key, 0) }
