@@ -3334,19 +3334,30 @@ function toggleTravel(open = travel.hidden) {
 function travelTo(name) {
   const place = [...tilesNear(3).flatMap(tile => tile.data.places), ...farPlaces].find(place => place.name === name)
   if (!place) return
-    const { segment, distance, t } = nearestSegment(place.x, place.z, 6)
-    if (segment && distance < 250) {
+  state.x = place.x
+  state.z = place.z
+  state.speed = 0
+  state.travel = place
+  hintEl.textContent = `Reizen naar ${place.name}…`
+  loadingHint = true
+  sendPos(performance.now(), true)
+  streamTiles()
+  toggleTravel(false)
+}
+
+function arrive() {
+  const here = tileAt(state.x, state.z)
+  if (!here || here.status !== 'ready' || !here.built.prepare) return
+  const { segment, distance, t } = nearestSegment(state.x, state.z, 6)
+  if (segment && distance < 250) {
     state.x = segment.a[0] + (segment.b[0] - segment.a[0]) * t
     state.z = segment.a[1] + (segment.b[1] - segment.a[1]) * t
     state.heading = Math.atan2(segment.b[0] - segment.a[0], segment.b[1] - segment.a[1])
-  } else {
-    state.x = place.x
-    state.z = place.z
   }
-  state.speed = 0
   if (blocked(state.x - Math.sin(state.heading) * 9, state.z - Math.cos(state.heading) * 9)) state.heading += Math.PI
   camera.position.set(state.x - Math.sin(state.heading) * 9, groundHeight(state.x, state.z) + 4.5, state.z - Math.cos(state.heading) * 9)
-  toggleTravel(false)
+  state.travel = null
+  streetEl.textContent = 'Aangekomen'
 }
 
 
@@ -3496,10 +3507,12 @@ function step(dt, now) {
   pump(5)
   streamAsphalt()
   streamDetails()
+  if (state.travel) arrive()
   const here = tileAt(state.x, state.z)
-  const waiting = !here || here.status === 'fetching' || here.status === 'data' || here.status === 'failed'
+  const waiting = !here || here.status === 'fetching' || here.status === 'data' || here.status === 'failed' || state.travel
   if (waiting) state.speed *= Math.max(0, 1 - 4 * dt)
-  if (waiting || (here && here.status === 'empty' && state.stuck > 0.3)) { hintEl.textContent = waiting ? 'Wereld laden…' : 'Hier eindigt Limburg'; loadingHint = true }
+  if (state.travel) hintEl.textContent = `Reizen naar ${state.travel.name}…`
+  else if (waiting || (here && here.status === 'empty' && state.stuck > 0.3)) { hintEl.textContent = waiting ? 'Wereld laden…' : 'Hier eindigt Limburg'; loadingHint = true }
   else if (loadingHint) { hintEl.textContent = HINT; loadingHint = false }
   updateNpcs(dt, now)
   pickUpPoop()

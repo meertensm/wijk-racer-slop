@@ -161,7 +161,8 @@ class Game
   def move_player(player, x, z, heading, speed)
     return unless [x, z, heading, speed].all? { |value| value.is_a?(Numeric) && value.to_f.finite? }
     player.last_seen = now
-    return unless world.inside?(x, z)
+    entry = world.entry_at(x, z)
+    return if entry && entry[:tile].outside?
     from = [player.car.x, player.car.z]
     player.car.move(x.to_f, z.to_f, heading, speed)
     return if !player.alive? || Math.hypot(x - from[0], z - from[1]) > 30
