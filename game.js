@@ -1551,7 +1551,7 @@ function evictTile(tile) {
   tile.status = 'evicted'
   tile.gen++
   tiles.delete(tile.key)
-  tile.meshes.forEach(mesh => { scene.remove(mesh); if (mesh.isInstancedMesh) mesh.dispose(); else mesh.geometry.dispose() })
+  tile.meshes.forEach(mesh => { scene.remove(mesh); if (mesh.isInstancedMesh) mesh.dispose(); else if (mesh.isGroup) mesh.traverse(child => child.geometry && child.geometry.dispose()); else mesh.geometry.dispose() })
   tile.meshes = []
   tile.buildings.forEach(building => building.cells.forEach(key => grid.get(key)?.delete(building)))
   tile.roads.forEach(road => { road.owners.delete(tile.key); if (!road.owners.size) unregisterRoad(road) })
@@ -1854,8 +1854,6 @@ function buildTrains(tile) {
     train.position.set(x, terrainHeight(x, z) + 0.15, z)
     train.rotation.y = heading
     scene.add(train)
-    train.isInstancedMesh = false
-    train.geometry = { dispose() { train.traverse(child => child.geometry && child.geometry.dispose()) } }
     tile.meshes.push(train)
   })
 }
