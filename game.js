@@ -1753,7 +1753,7 @@ function buildGround(tile) {
   scene.add(ground)
   tile.meshes.push(ground)
   const [x0, z0, x1, z1] = tileBounds(tile)
-  const rim = [[x0, z0], [x1, z0], [x1, z1], [x0, z1], [x0, z0]].map(([x, z]) => [x, terrainHeight(x, z), z])
+  const rim = [[x0, z0], [x1, z0], [x1, z1], [x0, z1], [x0, z0]].map(([x, z]) => [x, gridAt(tile, tile.heights || tile.smooth || tile.raw, x, z), z])
   const apron = new THREE.Mesh(paint(skirt(rim, rim.map(([x, y, z]) => [x, y - 1.5, z])), COLORS.ground), MATERIALS.plain)
   scene.add(apron)
   tile.meshes.push(apron)
