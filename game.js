@@ -743,8 +743,8 @@ function prepareRoad(road, bigWater) {
   })
   if (road.elevated || road.bridge) return
   const coarse = road.samples.filter((_, i) => i % 3 === 0 || i === road.samples.length - 1)
-  road.asphalt = [bufferRing(coarse, road.w)]
-  road.walkway = road.w >= 5 && road.w <= 8 && !road.dual ? [bufferRing(coarse, road.w + 3.1)] : null
+  road.asphalt = bufferPieces(coarse, road.w)
+  road.walkway = road.w >= 5 && road.w <= 8 && !road.dual ? bufferPieces(coarse, road.w + 3.1) : null
   const xs = road.samples.map(p => p[0]), zs = road.samples.map(p => p[1]), margin = road.w / 2 + 2
   road.cells = []
   for (let cx = Math.floor((Math.min(...xs) - margin) / SUB); cx <= Math.floor((Math.max(...xs) + margin) / SUB); cx++)
@@ -986,6 +986,23 @@ function roadMarkings(road, points, groups) {
   })
 }
 
+function bufferPieces(points, width) {
+  const r = width / 2, pieces = []
+  const circle = ([x, z]) => Array.from({ length: 17 }, (_, k) => [x + Math.cos(k / 16 * Math.PI * 2) * r, z + Math.sin(k / 16 * Math.PI * 2) * r])
+  for (let i = 1; i < points.length; i++) {
+    const [ax, az] = points[i - 1], [bx, bz] = points[i]
+    const length = Math.hypot(bx - ax, bz - az) || 1, nx = -(bz - az) / length * r, nz = (bx - ax) / length * r
+    pieces.push([[ax + nx, az + nz], [bx + nx, bz + nz], [bx - nx, bz - nz], [ax - nx, az - nz], [ax + nx, az + nz]])
+  }
+  points.forEach((point, i) => {
+    if (i === 0 || i === points.length - 1) return pieces.push(circle(point))
+    const [px, pz] = points[i - 1], [nx, nz] = points[i + 1]
+    const turn = Math.abs(Math.atan2(Math.sin(Math.atan2(nz - point[1], nx - point[0]) - Math.atan2(point[1] - pz, point[0] - px)), Math.cos(Math.atan2(nz - point[1], nx - point[0]) - Math.atan2(point[1] - pz, point[0] - px))))
+    if (turn > 0.12) pieces.push(circle(point))
+  })
+  return pieces
+}
+
 function bufferRing(points, width) {
   const sides = edges(points, width)
   const left = sides.map(([l]) => [l[0], l[2]]), right = sides.map(([, r]) => [r[0], r[2]])
@@ -1070,7 +1087,7 @@ function buildAsphaltCell(kx, kz) {
   const box = [[[x0, z0], [x1, z0], [x1, z1], [x0, z1], [x0, z0]]]
   return new Promise(resolve => {
     pendingCells.set(key, { resolve })
-    roadWorkers[workerTurn++ % roadWorkers.length].postMessage({ key, gen: cell.gen, box, asphalt: roads.map(road => road.asphalt[0]), walkways: roads.filter(road => road.walkway).map(road => road.walkway[0]) })
+    roadWorkers[workerTurn++ % roadWorkers.length].postMessage({ key, gen: cell.gen, box, asphalt: roads.flatMap(road => road.asphalt), walkways: roads.filter(road => road.walkway).flatMap(road => road.walkway) })
   })
 }
 
@@ -1920,7 +1937,8 @@ function buildSky() {
   clouds.castShadow = false
 }
 
-const bodyParts = []
+const bodyParts = [], brakeLights = []
+let flame = null, shiftDownAt = 0
 const CLEAN = new THREE.Color(0xefe6cf), FILTHY = new THREE.Color(0x4a3a24)
 
 function dirty(amount) {
@@ -1960,7 +1978,7 @@ function buildTrains(tile) {
   })
 }
 
-function pandaParts(part, body, glass = 0x2b3a4a, plastic = 0x3a3a3a) {
+function pandaParts(part, body, glass = 0x2b3a4a, plastic = 0x3a3a3a, lights = null) {
   const shell = [part(1.46, 0.44, 3.3, body, 0, 0.62, 0), part(1.4, 0.56, 2.3, body, 0, 1.13, -0.4)]
   part(1.44, 0.2, 0.95, body, 0, 0.8, 1.15)
   part(1.48, 0.16, 3.42, plastic, 0, 0.42, 0)
@@ -1972,7 +1990,8 @@ function pandaParts(part, body, glass = 0x2b3a4a, plastic = 0x3a3a3a) {
   part(1.36, 0.03, 1.6, body, 0, 1.42, -0.4)
   for (const side of [-1, 1]) {
     part(0.3, 0.14, 0.03, 0xf7f0c8, side * 0.5, 0.78, 1.66)
-    part(0.28, 0.12, 0.03, 0xc8281e, side * 0.52, 0.74, -1.66)
+    const light = part(0.28, 0.12, 0.03, 0xc8281e, side * 0.52, 0.74, -1.66)
+    if (lights) lights.push(light)
     part(0.02, 0.4, 0.9, glass, side * 0.72, 1.2, 0.2)
     part(0.02, 0.4, 0.95, glass, side * 0.72, 1.2, -0.9)
     part(0.08, 0.1, 0.16, plastic, side * 0.77, 1.05, 0.6)
@@ -2020,7 +2039,7 @@ function buildCar() {
         mesh.userData.rotation = mesh.rotation.clone()
         return mesh
       }
-  bodyParts.push(...pandaParts(part, 0xefe6cf))
+  bodyParts.push(...pandaParts(part, 0xefe6cf, undefined, undefined, brakeLights))
   car.children.forEach(mesh => { mesh.userData.rotation = mesh.rotation.clone() })
 
   for (const x of [-0.5, 0.5]) {
@@ -2041,6 +2060,13 @@ function buildCar() {
       mesh.userData.rotation = mesh.rotation.clone()
     }
   }
+  flame = new THREE.Mesh(new THREE.ConeGeometry(0.16, 1.1, 8).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xff8a1a, transparent: true, opacity: 0.85 }))
+  flame.material.userData.outlineParameters = { visible: false }
+  flame.position.set(-0.45, 0.4, -2.25)
+  flame.visible = false
+  flame.userData.position = flame.position.clone()
+  flame.userData.rotation = flame.rotation.clone()
+  car.add(flame)
   scene.add(car)
   return car
 }
@@ -2931,7 +2957,7 @@ function updateEngine() {
   wasGas = gas
   const blip = audio.currentTime < blipUntil ? 60 : 0
   if (engineSample) {
-    engineSample.source.playbackRate.setTargetAtTime(0.75 + revs * 1.1 + gear * 0.08 + (blip ? 0.45 : 0), audio.currentTime, 0.08)
+    engineSample.source.playbackRate.setTargetAtTime(0.75 + revs * 1.1 + gear * 0.08 + (blip ? 0.45 : 0) + (performance.now() < (state.turboUntil || 0) ? 0.5 : 0), audio.currentTime, 0.08)
     engineSample.gain.gain.setTargetAtTime(0.3 + revs * 0.4 + (gas || blip ? 0.2 : 0), audio.currentTime, 0.1)
     engineGain.gain.value = 0
   } else {
@@ -3462,6 +3488,10 @@ function arrive() {
     state.z = segment.a[1] + (segment.b[1] - segment.a[1]) * t
     state.heading = Math.atan2(segment.b[0] - segment.a[0], segment.b[1] - segment.a[1])
   }
+  if (blocked(state.x, state.z)) {
+    const spot = [4, 8, 12, 18, 26, 36].flatMap(radius => Array.from({ length: 12 }, (_, k) => [state.x + Math.cos(k / 12 * Math.PI * 2) * radius, state.z + Math.sin(k / 12 * Math.PI * 2) * radius])).find(([x, z]) => !blocked(x, z))
+    if (spot) [state.x, state.z] = spot
+  }
   if (blocked(state.x - Math.sin(state.heading) * 9, state.z - Math.cos(state.heading) * 9)) state.heading += Math.PI
   camera.position.set(state.x - Math.sin(state.heading) * 9, groundHeight(state.x, state.z) + 4.5, state.z - Math.cos(state.heading) * 9)
   state.travel = null
@@ -3483,10 +3513,23 @@ addEventListener('keydown', event => {
   if (!bigmap.hidden) return
   if (event.code === 'KeyT' && !/INPUT|TEXTAREA/.test(event.target.tagName)) return toggleTravel()
   if (!travel.hidden) return
+  if (event.code.startsWith('Shift') && !event.repeat) shiftDownAt = performance.now()
   keys.add(event.code)
   if (event.code.startsWith('Arrow')) event.preventDefault()
 })
-addEventListener('keyup', event => keys.delete(event.code))
+addEventListener('keyup', event => {
+  keys.delete(event.code)
+  if (event.code.startsWith('Shift') && performance.now() - shiftDownAt < 300) startTurbo()
+})
+
+function startTurbo() {
+  const now = performance.now()
+  if (now < (state.turboReadyAt || 0) || explosion) return
+  state.turboUntil = now + 5000
+  state.turboReadyAt = now + 15000
+  streetEl.textContent = 'TURBO!'
+  thud(0.4)
+}
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight
   camera.updateProjectionMatrix()
@@ -3543,12 +3586,17 @@ function step(dt, now) {
   state.steer += (wanted - state.steer) * Math.min(1, dt * (wanted ? 4 : 8))
 
   const speed = Math.abs(state.speed)
-  if (gas && state.speed >= 0) state.speed = Math.min(state.speed + PANDA.acceleration * (1 - speed / PANDA.topSpeed) * dt, PANDA.topSpeed)
+  const turbo = now < (state.turboUntil || 0), top = PANDA.topSpeed * (turbo ? 1.35 : 1)
+  if (gas && state.speed >= 0) state.speed = Math.min(state.speed + PANDA.acceleration * (turbo ? 2.6 : 1) * (1 - speed / top) * dt, top)
   else if (gas) state.speed = Math.min(state.speed + PANDA.braking * dt, 0)
   else if (brake && state.speed > 0) state.speed = Math.max(state.speed - PANDA.braking * dt, 0)
   else if (brake) state.speed = Math.max(state.speed - PANDA.acceleration * 0.5 * dt, -PANDA.reverseSpeed)
   else state.speed -= Math.sign(state.speed) * Math.min(speed, (0.6 + speed * 0.04) * dt)
   if (handbrake) state.speed -= Math.sign(state.speed) * Math.min(speed, 16 * dt)
+  const lit = brake || handbrake || state.speed < -0.5
+  if (lit !== state.lit) { state.lit = lit; brakeLights.forEach(mesh => { mesh.material.color.setHex(lit ? 0xff3b30 : 0xc8281e); mesh.material.emissive.setHex(lit ? 0xc81a10 : 0x000000) }) }
+  if (flame) { flame.visible = turbo && gas; flame.scale.set(0.7 + Math.random() * 0.6, 0.7 + Math.random() * 0.6, 0.6 + Math.random() * 0.9) }
+  if (turbo && !state.turboNoted) { state.turboNoted = true } else if (!turbo && state.turboNoted) { state.turboNoted = false; streetEl.textContent = 'Turbo op' }
 
   const yawRate = Math.min(speed * Math.tan(PANDA.steeringLock) / PANDA.wheelbase, PANDA.grip / Math.max(speed, 0.1))
   state.heading -= state.steer * yawRate * Math.sign(state.speed) * dt
@@ -3593,8 +3641,10 @@ function step(dt, now) {
   car.position.set(state.x, y, state.z)
   car.rotation.set(-pitch, state.heading, -roll + state.steer * -0.04 * Math.tanh(state.speed / 10))
 
-  const distance = 9 + Math.abs(state.speed) * 0.15
-  const target = new THREE.Vector3(state.x - fx * distance, y + 4.5, state.z - fz * distance)
+  let distance = 9 + Math.abs(state.speed) * 0.15, pull = 1
+  while (pull > 0.3 && blocked(state.x - fx * distance * pull, state.z - fz * distance * pull)) pull -= 0.1
+  distance *= pull
+  const target = new THREE.Vector3(state.x - fx * distance, y + 4.5 + (1 - pull) * 4, state.z - fz * distance)
   camera.position.lerp(target, 1 - Math.exp(-dt * 4))
   camera.position.y = Math.max(camera.position.y, terrainHeight(camera.position.x, camera.position.z) + 1.5) + (Math.random() - 0.5) * state.shake
   camera.lookAt(state.x, y + 1.2, state.z)
