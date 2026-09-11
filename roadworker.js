@@ -21,11 +21,22 @@ function union(polygons) {
 }
 
 function difference(a, b) {
-  try { return polygonClipping.difference(a, b) } catch { return a }
+  try { return polygonClipping.difference(a, b) } catch { }
+  const result = []
+  for (const polygon of a) {
+    try { result.push(...polygonClipping.difference([polygon], b)) } catch { }
+  }
+  return result
+}
+
+const area = ring => Math.abs(ring.reduce((sum, [x, z], i) => { const [nx, nz] = ring[(i + 1) % ring.length]; return sum + x * nz - nx * z }, 0)) / 2
+
+function solid(polygons) {
+  return polygons.map(rings => rings.filter(ring => area(ring) > 0.5)).filter(rings => rings.length && area(rings[0]) > 0.5)
 }
 
 onmessage = ({ data: { key, gen, asphalt, walkways, box } }) => {
-  const roads = union(clip(asphalt, box))
-  const walks = union(clip(walkways, box))
-  postMessage({ key, gen, asphalt: roads, walkways: walks.length ? difference(walks, roads) : [] })
+  const roads = solid(union(clip(asphalt, box)))
+  const walks = solid(union(clip(walkways, box)))
+  postMessage({ key, gen, asphalt: roads, walkways: walks.length ? solid(difference(walks, roads)) : [] })
 }

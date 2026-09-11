@@ -926,7 +926,7 @@ function strip(points, nodes, width, lift, color, parts) {
 
 function dashes(points, parts) {
   const total = points.slice(1).reduce((sum, [x, z], i) => sum + Math.hypot(x - points[i][0], z - points[i][1]), 0)
-  for (let d = 2; d + 3 <= total; d += 9) parts.push(paint(ribbon([pointAt(points, d), pointAt(points, d + 3)], 0.15, 0.26), COLORS.dash))
+  for (let d = 2; d + 3 <= total; d += 9) parts.push(paint(ribbon([pointAt(points, d), pointAt(points, d + 3)], 0.15, LIFT.paint), COLORS.dash))
 }
 
 function quad(cx, cz, ux, uz, nx, nz, width, bottom, height, color) {
@@ -983,11 +983,11 @@ function buildRoadLinework(tile, road, groups) {
 }
 
 function roadMarkings(road, points, groups) {
-  if (road.w >= 4) for (const lane of [-1, 1]) for (const wheel of [-1, 1]) band(points, lane * road.w / 4 + wheel * 0.62, 0.115, 0.27, COLORS.wear, groups.plain)
+  if (road.w >= 4) for (const lane of [-1, 1]) for (const wheel of [-1, 1]) band(points, lane * road.w / 4 + wheel * 0.62, 0.115, LIFT.wear, COLORS.wear, groups.plain)
   if (road.w < 7 && !road.dual) return
   splitWhere(points, ([x, z]) => onOtherAsphalt(x, z, road, 2.5)).forEach(marks => {
     if (!road.dual || road.w >= 9) dashes(marks, groups.plain)
-    for (const side of [-1, 1]) band(marks, side * (road.w / 2 - 0.35), 0.12, 0.26, COLORS.dash, groups.plain)
+    for (const side of [-1, 1]) band(marks, side * (road.w / 2 - 0.35), 0.12, LIFT.paint, COLORS.dash, groups.plain)
   })
 }
 
@@ -1003,7 +1003,7 @@ function bufferPieces(points, width) {
     if (i === 0 || i === points.length - 1) return pieces.push(circle(point))
     const [px, pz] = points[i - 1], [nx, nz] = points[i + 1]
     const turn = Math.abs(Math.atan2(Math.sin(Math.atan2(nz - point[1], nx - point[0]) - Math.atan2(point[1] - pz, point[0] - px)), Math.cos(Math.atan2(nz - point[1], nx - point[0]) - Math.atan2(point[1] - pz, point[0] - px))))
-    if (turn > 0.12) pieces.push(circle(point))
+    if (turn > 0.005) pieces.push(circle(point))
   })
   return pieces
 }
@@ -1110,10 +1110,15 @@ function* polygonGeometry(rings, lift, color) {
 
 function curb(ring, top, bottom, parts) {
   const dense = alongGround(ring)
-  const upper = dense.map(([x, z]) => [x, terrainHeight(x, z) + top, z]), lower = dense.map(([x, z]) => [x, terrainHeight(x, z) + bottom, z])
-  parts.push(paint(skirt(upper, lower), COLORS.curb))
+  const lift = ([x, z], amount) => [x, terrainHeight(x, z) + amount, z]
+  for (let i = 1; i < dense.length; i++) {
+    const [ax, az] = dense[i - 1], [bx, bz] = dense[i]
+    if (onOtherAsphalt((ax + bx) / 2, (az + bz) / 2, null, -0.3)) continue
+    parts.push(paint(skirt([lift(dense[i - 1], top), lift(dense[i], top)], [lift(dense[i - 1], bottom), lift(dense[i], bottom)]), COLORS.curb))
+  }
 }
 
+const LIFT = { asphalt: 0.06, sidewalk: 0.18, wear: 0.08, paint: 0.09 }
 const roadCells = new Map(), asphaltCells = new Map(), pendingCells = new Map()
 const roadWorkers = [0, 1].map(() => new Worker('roadworker.js', { type: 'module' }))
 let workerTurn = 0
@@ -1157,8 +1162,8 @@ function buildAsphaltCell(kx, kz) {
 function placeAsphaltStep(cell, data) {
   const groups = newGroups(), box = cellBox(cell.kx, cell.kz, 0)
   const tasks = [
-    ...data.asphalt.map(polygon => function* () { groups.asphalt.push(yield* polygonGeometry(polygon, 0.22, COLORS.road)) }),
-    ...data.walkways.map(polygon => function* () { groups.paving.push(yield* polygonGeometry(polygon, 0.3, COLORS.sidewalk)); polygon.forEach(ring => curb(ring, 0.3, 0.16, groups.plain)) }),
+    ...data.asphalt.map(polygon => function* () { groups.asphalt.push(yield* polygonGeometry(polygon, LIFT.asphalt, COLORS.road)) }),
+    ...data.walkways.map(polygon => function* () { groups.paving.push(yield* polygonGeometry(polygon, LIFT.sidewalk, COLORS.sidewalk)); polygon.forEach(ring => curb(ring, LIFT.sidewalk, 0, groups.plain)) }),
     ...cell.roads.map(road => function* () { piecesIn(road.samples, box).forEach(points => roadMarkings(road, points, groups)) })
   ].map(task => task())
   return () => {
@@ -2364,7 +2369,7 @@ function freeSlot(kind, index) {
 
 function placeNpc(npc, bob) {
   if (npc.index < 0) return
-  dummy.position.set(npc.x, terrainHeight(npc.x, npc.z) + bob, npc.z)
+  dummy.position.set(npc.x, groundHeight(npc.x, npc.z) + bob, npc.z)
   dummy.rotation.set(0, npc.heading, 0)
   dummy.scale.set(1, 1, 1)
   if (npc.dead) {
@@ -2456,7 +2461,7 @@ function markDead(npc) {
   placeNpc(npc, 0)
   if (npc.splat) return
   npc.splat = new THREE.Mesh(new THREE.CircleGeometry(npc.kind === 'dogwalker' ? 1.4 : 1.2, 12).rotateX(-Math.PI / 2), npc.kind === 'zombie' ? slime : blood)
-  npc.splat.position.set(npc.x, groundHeight(npc.x, npc.z) + 0.21, npc.z)
+  npc.splat.position.set(npc.x, groundHeight(npc.x, npc.z) + 0.01, npc.z)
   scene.add(npc.splat)
 }
 
@@ -2536,7 +2541,7 @@ function skidMarks(now) {
     const x = state.x + Math.cos(state.heading) * side * 0.66 - Math.sin(state.heading) * 1.1
     const z = state.z - Math.sin(state.heading) * side * 0.66 - Math.cos(state.heading) * 1.1
     const mark = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 1.3).rotateX(-Math.PI / 2), rubber)
-    mark.position.set(x, groundHeight(x, z) + 0.235, z)
+    mark.position.set(x, groundHeight(x, z) + 0.02, z)
     mark.rotation.y = state.heading
     scene.add(mark)
     skids.push({ mesh: mark, born: now })
@@ -2555,7 +2560,7 @@ function bloodTrail() {
     const x = state.x + Math.cos(state.heading) * side * 0.66 - Math.sin(state.heading) * 1.1
     const z = state.z - Math.sin(state.heading) * side * 0.66 - Math.cos(state.heading) * 1.1
     const smear = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 1.5).rotateX(-Math.PI / 2), material)
-    smear.position.set(x, groundHeight(x, z) + 0.22, z)
+    smear.position.set(x, groundHeight(x, z) + 0.012, z)
     smear.rotation.y = state.heading
     scene.add(smear)
   }
@@ -2645,7 +2650,7 @@ function pooTrail(now) {
     const x = state.x + Math.cos(state.heading) * side * 0.66 - Math.sin(state.heading) * 1.1
     const z = state.z - Math.sin(state.heading) * side * 0.66 - Math.cos(state.heading) * 1.1
     const smear = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 1.5).rotateX(-Math.PI / 2), material)
-    smear.position.set(x, groundHeight(x, z) + 0.23, z)
+    smear.position.set(x, groundHeight(x, z) + 0.015, z)
     smear.rotation.y = state.heading
     scene.add(smear)
     smears.push({ mesh: smear, x, z, y: smear.position.y, born: now })
@@ -2760,7 +2765,14 @@ function nearestSegment(x, z, reach = 1) {
 function groundHeight(x, z) {
   const { segment, distance, t } = nearestSegment(x, z)
   if (segment && segment.road.elevated && distance < segment.road.w / 2 + 1.5) return segment.a[2] + (segment.b[2] - segment.a[2]) * t
-  return terrainHeight(x, z)
+  return terrainHeight(x, z) + surfaceLift(segment && segment.road, distance)
+}
+
+function surfaceLift(road, distance) {
+  if (!road || !road.asphalt) return 0
+  if (distance < road.w / 2) return LIFT.asphalt
+  if (road.walkway && distance < road.w / 2 + 1.55) return LIFT.sidewalk
+  return 0
 }
 
 const roadDistance = (x, z) => nearestSegment(x, z).distance
@@ -3430,7 +3442,7 @@ function applyPlayers(rows) {
       const group = pandaModel(new THREE.Color().setHSL(hue / 360, 0.6, 0.55).getHex())
       const label = nameLabel(name)
       group.add(label)
-      group.position.set(x, terrainHeight(x, z), z)
+      group.position.set(x, groundHeight(x, z), z)
       scene.add(group)
       other = { group, label, name, score: playerScore, target: { x, z, heading }, flame: turboFlame(group) }
       others.set(id, other)
@@ -3693,6 +3705,13 @@ function bumpCars() {
   })
 }
 
+function suspend(current, target, dt, snap = Infinity) {
+  const k = Math.min(1, dt * 6)
+  if (Array.isArray(target)) return current ? target.map((value, i) => current[i] + (value - current[i]) * k) : target
+  if (current === undefined || Math.abs(target - current) > snap) return target
+  return current + (target - current) * k
+}
+
 function corners(x, z, heading) {
   const fx = Math.sin(heading), fz = Math.cos(heading)
   const rx = Math.cos(heading), rz = -Math.sin(heading)
@@ -3771,8 +3790,11 @@ function step(dt, now) {
   const y = groundHeight(state.x, state.z)
   const pitch = Math.atan2(groundHeight(state.x + fx * 1.7, state.z + fz * 1.7) - groundHeight(state.x - fx * 1.7, state.z - fz * 1.7), 3.4)
   const roll = Math.atan2(groundHeight(state.x - fz * 0.75, state.z + fx * 0.75) - groundHeight(state.x + fz * 0.75, state.z - fx * 0.75), 1.5)
-  car.position.set(state.x, y, state.z)
-  car.rotation.set(-pitch, state.heading, -roll + state.steer * -0.04 * Math.tanh(state.speed / 10))
+  const ride = suspend(state.ride, y, dt, 2), lean = suspend(state.lean, [pitch, roll], dt)
+  state.ride = ride
+  state.lean = lean
+  car.position.set(state.x, ride, state.z)
+  car.rotation.set(-lean[0], state.heading, -lean[1] + state.steer * -0.04 * Math.tanh(state.speed / 10))
 
   let distance = 9 + Math.abs(state.speed) * 0.15, pull = 1
   while (pull > 0.3 && blocked(state.x - fx * distance * pull, state.z - fz * distance * pull)) pull -= 0.1
