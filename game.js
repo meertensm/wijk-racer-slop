@@ -1051,7 +1051,7 @@ function cellBox(kx, kz, margin) {
 
 function cellReady(kx, kz) {
   const centre = tileAt((kx + 0.5) * SUB, (kz + 0.5) * SUB)
-  if (!centre || centre.status !== 'ready') return false
+  if (!centre || centre.status !== 'ready' || !centre.built.prepare) return false
   const [x0, z0, x1, z1] = cellBox(kx, kz, 9)
   for (const x of [x0, x1]) for (const z of [z0, z1]) {
     const tile = tileAt(x, z)
