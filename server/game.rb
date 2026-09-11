@@ -1,6 +1,7 @@
 class Game
   TICK, NET, RANGE, DROP, ACTIVE, INTEREST, KEEP = 0.05, 0.1, 600, 660, 700, 1, 2
   TURBO_PRICE, POOP_REWARD = 5, 0.5
+  HEAT_PER_KILL, HEAT_DECAY, WANTED_AT, POLICE_ID = 1.0, 1 / 30.0, 2.0, 10**12
   attr_reader :inbox, :now, :world, :crowd, :store
 
   def initialize(world, store, scores)
@@ -17,6 +18,8 @@ class Game
     @now        = 0.0
     @net        = 0.0
     @interest   = 0.0
+    @heat       = Hash.new(0.0)
+    @police     = {}
   end
 
   def start
@@ -36,6 +39,23 @@ class Game
     scores.award(player.name, npc.reward)
     events << ['kill', npc.id, player.id, npc.reward, npc.x.round(1), npc.z.round(1)]
     events << ['score', player.id, scores[player.name]]
+    heat_up(player)
+  end
+
+  def arrest(player, cop)
+    scores.award(player.name, -(scores[player.name] / 2.0))
+    player.dead_until = now + 2.5
+    events << ['arrest', player.id, cop.id]
+    events << ['score', player.id, scores[player.name]]
+    dismiss(cop)
+  end
+
+  def dismiss(cop)
+    return unless police.delete(cop.target.id)
+    crowd.remove(cop)
+    heat[cop.target.id] = 0.0
+    events << ['gone', cop.id]
+    events << ['wanted', cop.target.id, 0]
   end
 
   def explode(player, npc)
@@ -69,7 +89,7 @@ class Game
 
   private
 
-  attr_reader :scores, :players, :poops, :events, :population, :prefetcher
+  attr_reader :scores, :players, :poops, :events, :population, :prefetcher, :heat, :police
 
   def run
     last = clock
@@ -95,7 +115,8 @@ class Game
     end
     active = {}
     players.each_value { |player| crowd.near(player.car.x, player.car.z, ACTIVE).each { |npc| active[npc.id] = npc } }
-    active.each_value { |npc| npc.tick(dt, self); crowd.settle(npc) }
+    police.each_value { |cop| active[cop.id] = cop }
+    active.each_value { |npc| npc.tick(dt, self); crowd.settle(npc) if crowd[npc.id] }
     respawn_players
     players.values.each { |player| leave(player.client) && player.client.close if now - player.last_seen > 10 }
     scores.flush(now)
@@ -164,7 +185,26 @@ class Game
   end
 
   def leave(client)
-    players.delete(client.id) && events << ['left', client.id]
+    player = players.delete(client.id) or return
+    dismiss(police[player.id]) if police[player.id]
+    events << ['left', client.id]
+  end
+
+  def heat_up(player)
+    heat[player.id] = [heat[player.id] - (now - (@heated || now)) * HEAT_DECAY, 0.0].max + HEAT_PER_KILL
+    @heated = now
+    return if police[player.id] || heat[player.id] < WANTED_AT
+    dispatch(player)
+  end
+
+  def dispatch(player)
+    car = player.car
+    spot = [Math::PI, Math::PI * 0.75, Math::PI * 1.25, Math::PI / 2, -Math::PI / 2].map { |turn| [car.x + Math.sin(car.heading + turn) * 90, car.z + Math.cos(car.heading + turn) * 90] }
+               .find { |x, z| world.inside?(x, z) && !world.blocked?(x, z) } or return
+    cop = Politie.new(POLICE_ID + player.id, spot[0], spot[1], car.heading, world, Random.new(player.id), player)
+    police[player.id] = cop
+    crowd.add(cop)
+    events << ['wanted', player.id, 1]
   end
 
   def move_player(player, x, z, heading, speed)

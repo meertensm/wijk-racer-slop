@@ -25,6 +25,10 @@
     #coins img { width: 34px; height: 34px; border-radius: 50%; border: 2px solid #ffd166; vertical-align: middle; margin-right: 4px; object-fit: cover; filter: sepia(1) saturate(4) hue-rotate(-8deg) brightness(1.05); }
     #players { position: fixed; top: 92px; left: 24px; color: #fff; font: 600 15px/1.5 system-ui, sans-serif; text-shadow: 0 1px 4px rgba(0, 0, 0, .7); }
     #players .me { color: #ffd166; cursor: pointer; }
+    #players .star { color: #ff3b30; }
+    #wanted { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); color: #ff3b30; font: 900 26px system-ui, sans-serif; letter-spacing: .08em; text-shadow: 0 2px 8px rgba(0, 0, 0, .7); animation: wanted 1s steps(2) infinite; }
+    #wanted[hidden] { display: none; }
+    @keyframes wanted { 50% { opacity: .35; } }
         #players .me:hover { text-decoration: underline; }
         #players small { font-weight: 400; opacity: .8; }
     #bigmap[hidden] { display: none; }
@@ -80,6 +84,7 @@
 <div id="hint">Pijltjes of WASD · Shift = handrem · T = fast travel</div>
 <div id="coins"><img src="assets/gcoin.jpg" alt=""> <span>0</span> coins</div>
 <div id="players"></div>
+<div id="wanted" hidden></div>
 <canvas id="bigmap" hidden></canvas>
 <div id="townsign"></div>
 <div id="travel" hidden>

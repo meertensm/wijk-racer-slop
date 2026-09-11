@@ -1,5 +1,5 @@
 class Npc < Entity
-  KINDS  = %w[beagle baldman baldflag dogwalker labradoodle tattooman speakerboy zwerver zombie junkie]
+  KINDS  = %w[beagle baldman baldflag dogwalker labradoodle tattooman speakerboy zwerver zombie junkie politie]
   LEASH  = 40
   REWARD = nil
   LABEL  = 'Npc'

@@ -2,7 +2,7 @@ class Population
   CLASSES = {
     'beagle'     => Beagle,    'baldman'   => BaldMan,   'baldflag' => BaldFlag, 'dogwalker' => DogWalker,
     'tattooman'  => TattooMan, 'speakerboy' => Speakerboy, 'zwerver' => Zwerver, 'zombie'   => Zombie,
-    'junkie'     => Junkie,    'labradoodle' => Labradoodle
+    'junkie'     => Junkie,    'labradoodle' => Labradoodle, 'politie' => Politie
   }
   SPOTS_PER_TILE = 1000
 

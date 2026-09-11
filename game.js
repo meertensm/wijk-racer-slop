@@ -12,6 +12,7 @@ const TIPS = [
   'De labradoodle is onsterfelijk en rent weg. Raak een beagle en je Panda ontploft: al je coins weg.',
   'Elke kill is een coin, Speakerboy is er vijf waard, een drol oprapen een halve.',
   'Kort op Shift tikken is turbo: vijf seconden vlammen voor vijf coins.',
+  'Drie kills snel achter elkaar en de politie komt. Opgepakt worden kost je de helft van je coins.',
   'In Einighausen lopen alleen kale mannetjes rond.',
   'Druk op T om naar een supermarkt, skatebaan of station te springen.',
   'Bij het eet.nu-kantoor aan de Brugstraat staat iemand voor de deur.',
@@ -2278,6 +2279,22 @@ function labradoodleGeometry() {
   return merged(parts)
 }
 
+function politieGeometry() {
+  const parts = []
+  const wheel = (x, z) => parts.push(paint(new THREE.CylinderGeometry(0.31, 0.31, 0.22, 14).rotateZ(Math.PI / 2).translate(x, 0.31, z), new THREE.Color(0x111111)))
+  for (const side of [-1, 1]) { wheel(side * 0.78, 1.15); wheel(side * 0.78, -1.15) }
+  box(parts, 1.5, 0.55, 3.4, 0xf4f4f4, 0, 0.62, 0)
+  box(parts, 1.5, 0.12, 3.4, 0x1f4fd1, 0, 0.95, 0)
+  box(parts, 1.52, 0.1, 0.5, 0xff7a00, 0, 0.62, -1.46)
+  box(parts, 1.36, 0.5, 1.9, 0xf4f4f4, 0, 1.25, -0.15)
+  box(parts, 1.38, 0.34, 1.7, 0x9fc4e6, 0, 1.28, -0.15)
+  box(parts, 1.0, 0.16, 0.34, 0x151515, 0, 1.58, -0.1)
+  box(parts, 0.4, 0.14, 0.3, 0xff2b2b, -0.28, 1.65, -0.1)
+  box(parts, 0.4, 0.14, 0.3, 0x2b6bff, 0.28, 1.65, -0.1)
+  for (const side of [-1, 1]) { box(parts, 0.22, 0.14, 0.05, 0xfff3b0, side * 0.5, 0.7, 1.71); box(parts, 0.22, 0.12, 0.05, 0xff3b30, side * 0.5, 0.7, -1.71) }
+  return merged(parts)
+}
+
 function speakerboyGeometry() {
   const parts = []
   const wheel = (z) => parts.push(paint(new THREE.CylinderGeometry(0.35, 0.35, 0.05, 14).rotateZ(Math.PI / 2).translate(0, 0.35, z), new THREE.Color(0x111111)))
@@ -2313,7 +2330,8 @@ const KINDS = {
   speakerboy:  { geometry: speakerboyGeometry,  label: 'Speakerboy',            bob: 0.02 },
   zwerver:     { geometry: zwerverGeometry,     label: 'Zwerver',               bob: 0.02 },
   zombie:      { geometry: zombieGeometry,      label: 'Zombie',                bob: 0.06 },
-  junkie:      { geometry: junkieGeometry,      label: 'Junk',                  bob: 0.05 }
+  junkie:      { geometry: junkieGeometry,      label: 'Junk',                  bob: 0.05 },
+  politie:     { geometry: politieGeometry,     label: 'Politie',               bob: 0 }
 }
 
 let NPC_INFO = {}
@@ -2412,11 +2430,12 @@ function updateNpcs(dt, now) {
     nearest[npc.kind] = Math.min(nearest[npc.kind], distance)
     if (!explosion && distance < 1.6) contact(npc, perf)
   })
+  sirenLevel(nearest.politie)
 }
 
 function contact(npc, perf) {
   sendPos(perf, true)
-  if (npc.kind === 'labradoodle') return
+  if (npc.kind === 'labradoodle' || npc.kind === 'politie') return
   if (describe(npc.kind).reward !== null) { npc.predictedAt = perf; killEffects(npc) }
   else explode(describe(npc.kind).label)
 }
@@ -3454,6 +3473,13 @@ const EVENTS = {
   },
   respawn(player) { if (player === myId) respawn() },
   turbo(player) { const other = others.get(player); if (other) other.turboUntil = performance.now() + 5000 },
+  gone(id) { removeNpc(id) },
+  wanted(player, level) {
+    if (player === myId) { wanted = level; wantedEl.hidden = !level; wantedEl.textContent = level ? '★ GEZOCHT' : '' }
+    else { const other = others.get(player); if (other) other.wanted = level }
+    renderPlayers()
+  },
+  arrest(player) { if (player === myId) arrested() },
   score(player, value) { if (player === myId) showScore(value) },
   poop(...row) { addPoop(row) },
   unpoop(id, by) {
@@ -3472,8 +3498,36 @@ const EVENTS = {
 }
 
 function renderPlayers() {
-  const row = (name, score, me) => `<div${me ? ' class="me" title="Klik om je naam te wijzigen"' : ''}>${name}${score ? ` <small>${score.toLocaleString('nl-NL')} coins</small>` : ''}</div>`
-  playersEl.innerHTML = row(myName(), score, true) + [...others.values()].sort((a, b) => b.score - a.score).map(other => row(other.name, other.score, false)).join('')
+  const row = (name, score, me, hot) => `<div${me ? ' class="me" title="Klik om je naam te wijzigen"' : ''}>${hot ? '<b class="star">★</b> ' : ''}${name}${score ? ` <small>${score.toLocaleString('nl-NL')} coins</small>` : ''}</div>`
+  playersEl.innerHTML = row(myName(), score, true, wanted) + [...others.values()].sort((a, b) => b.score - a.score).map(other => row(other.name, other.score, false, other.wanted)).join('')
+}
+
+const wantedEl = document.getElementById('wanted')
+let wanted = 0, siren = null
+
+function arrested() {
+  state.heldUntil = performance.now() + 2500
+  state.speed = 0
+  state.shake = 1.5
+  streetEl.textContent = 'OPGEPAKT: de helft van je coins kwijt'
+  thud(0.6)
+}
+
+function sirenLevel(distance) {
+  if (!sfx) return
+  const level = distance < Infinity ? Math.max(0, 1 - distance / 260) ** 2 * 0.3 : 0
+  if (!siren) {
+    if (!level) return
+    const osc = audio.createOscillator(), gain = audio.createGain()
+    osc.type = 'triangle'
+    gain.gain.value = 0
+    osc.connect(gain).connect(sfx)
+    osc.start()
+    siren = { osc, gain, phase: 0 }
+  }
+  const phase = Math.floor(performance.now() / 450) % 2
+  if (phase !== siren.phase) { siren.phase = phase; siren.osc.frequency.setTargetAtTime(phase ? 930 : 690, audio.currentTime, 0.04) }
+  siren.gain.gain.setTargetAtTime(level, audio.currentTime, 0.15)
 }
 
 playersEl.addEventListener('click', event => {
@@ -3656,6 +3710,12 @@ function corners(x, z, heading) {
 function step(dt, now) {
   if (explosion) {
     updateExplosion(dt)
+    return
+  }
+  if (now < (state.heldUntil || 0)) {
+    state.speed = 0
+    updateNpcs(dt, now)
+    updateMultiplayer(dt, now)
     return
   }
 

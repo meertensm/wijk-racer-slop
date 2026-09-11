@@ -43,6 +43,8 @@ Per NPC-klasse (`server/npcs/`) staan gedrag, beloning, dichtheid, stem en zinne
 
 Punten: elke kill is 1 coin, Speakerboy 5, een drol oprapen 0,5; de dubbele combo over de uitlater geeft twee halve coins extra. Een turbo kost 5 coins en een beagle raken zet je score op nul. Alles staat in `Game` en in `REWARD` per NPC-klasse.
 
+Drie kills kort na elkaar maken je gezocht: een politie-Panda (`Politie`, `server/npcs/politie.rb`) verschijnt achter je en jaagt op je met sirene. Sta je langer dan een seconde stil binnen bereik, dan ben je opgepakt en verlies je de helft van je coins. Rij hem 450 m van je af en hij geeft op.
+
 Configuratie in `server/limburg.rb`: startadres, zones per plaatsnaam (welke NPC's waar lopen) en vaste spots zoals de getatoeëerde kale man bij eet.nu.
 
 ## Geluid
