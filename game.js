@@ -530,7 +530,8 @@ function gridAt(tile, field, x, z) {
   const gx = clamp((x - g.x0) / g.step, 0, g.cols - 1.001), gz = clamp((z - g.z0) / g.step, 0, g.rows - 1.001)
   const i = Math.floor(gx), j = Math.floor(gz), fx = gx - i, fz = gz - j
   const h = (c, r) => field[r * g.cols + c]
-  return (h(i, j) * (1 - fx) + h(i + 1, j) * fx) * (1 - fz) + (h(i, j + 1) * (1 - fx) + h(i + 1, j + 1) * fx) * fz
+  if (fx + fz <= 1) return h(i, j) + (h(i + 1, j) - h(i, j)) * fx + (h(i, j + 1) - h(i, j)) * fz
+  return h(i + 1, j + 1) + (h(i, j + 1) - h(i + 1, j + 1)) * (1 - fx) + (h(i + 1, j) - h(i + 1, j + 1)) * (1 - fz)
 }
 
 function terrainHeight(x, z) {
@@ -659,7 +660,7 @@ function stampStep(tile) {
           return [x, z, total / count, heights[i]]
         })
       }
-      const reach = road.w / 2 + 6
+      const reach = road.w / 2 + 7.5
       road.profile.forEach(([x, z, level, height]) => {
         if (Math.abs(level - height) > 2.5 || x < g.x0 - reach || x > x1 + reach || z < g.z0 - reach || z > z1 + reach) return
         const c0 = clamp(Math.floor((x - reach - g.x0) / g.step), 0, g.cols - 1), c1 = clamp(Math.ceil((x + reach - g.x0) / g.step), 0, g.cols - 1)
@@ -667,7 +668,7 @@ function stampStep(tile) {
         for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
           const distance = Math.hypot(g.x0 + c * g.step - x, g.z0 + r * g.step - z)
           if (distance > reach) continue
-          const w = distance < road.w / 2 + 1 ? 1 : 1 - (distance - road.w / 2 - 1) / 5
+          const w = distance < road.w / 2 + 2.5 ? 1 : 1 - (distance - road.w / 2 - 2.5) / 5
           sum[r * g.cols + c] += level * w
           weight[r * g.cols + c] += w
         }
@@ -879,6 +880,7 @@ function cutOut(points, gaps) {
 }
 
 function band(points, offset, width, lift, color, parts) {
+  points = alongGround(points)
   const inner = offsetLine(points, offset, lift), outer = offsetLine(points, offset + Math.sign(offset) * width, lift)
   parts.push(paint(skirt(inner, outer), color))
   return inner
@@ -980,7 +982,7 @@ function buildRoadLinework(tile, road, groups) {
 }
 
 function roadMarkings(road, points, groups) {
-  if (road.w >= 4) for (const lane of [-1, 1]) for (const wheel of [-1, 1]) band(points, lane * road.w / 4 + wheel * 0.62, 0.115, 0.45, COLORS.wear, groups.plain)
+  if (road.w >= 4) for (const lane of [-1, 1]) for (const wheel of [-1, 1]) band(points, lane * road.w / 4 + wheel * 0.62, 0.115, 0.27, COLORS.wear, groups.plain)
   if (road.w < 7 && !road.dual) return
   splitWhere(points, ([x, z]) => onOtherAsphalt(x, z, road, 2.5)).forEach(marks => {
     if (!road.dual || road.w >= 9) dashes(marks, groups.plain)
@@ -1019,7 +1021,66 @@ function bufferRing(points, width) {
   return ring
 }
 
-function polygonGeometry(rings, lift, color) {
+function cutAlong(polygon, f, spacing) {
+  const values = polygon.map(f)
+  let pieces = [polygon]
+  for (let k = Math.ceil(Math.min(...values) / spacing); k <= Math.floor(Math.max(...values) / spacing); k++) {
+    const level = k * spacing, next = []
+    for (const piece of pieces) {
+      const below = [], above = []
+      piece.forEach((p, i) => {
+        const q = piece[(i + 1) % piece.length], fp = f(p) - level, fq = f(q) - level
+        if (fp <= 0) below.push(p)
+        if (fp >= 0) above.push(p)
+        if ((fp < 0 && fq > 0) || (fp > 0 && fq < 0)) {
+          const t = fp / (fp - fq), m = [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]
+          below.push(m)
+          above.push(m)
+        }
+      })
+      if (below.length > 2) next.push(below)
+      if (above.length > 2) next.push(above)
+    }
+    pieces = next
+  }
+  return pieces
+}
+
+const GRID_LINES = [p => p[0], p => p[1], p => p[0] + p[1]]
+
+function planarGround([a, b, c]) {
+  const ha = terrainHeight(a[0], a[1]), hb = terrainHeight(b[0], b[1]), hc = terrainHeight(c[0], c[1])
+  const probes = [[(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (ha + hb) / 2], [(b[0] + c[0]) / 2, (b[1] + c[1]) / 2, (hb + hc) / 2], [(c[0] + a[0]) / 2, (c[1] + a[1]) / 2, (hc + ha) / 2], [(a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3, (ha + hb + hc) / 3]]
+  return probes.every(([x, z, expected]) => Math.abs(terrainHeight(x, z) - expected) < 0.05)
+}
+
+function groundPieces(triangle) {
+  if (planarGround(triangle)) return [triangle]
+  const step = tileAt(triangle[0][0], triangle[0][1])?.grid.step || 10
+  let pieces = [triangle]
+  for (const f of GRID_LINES) pieces = pieces.flatMap(piece => cutAlong(piece, f, step))
+  return pieces
+}
+
+function alongGround(points) {
+  const step = tileAt(points[0][0], points[0][1])?.grid.step || 10, dense = [points[0]]
+  for (let i = 1; i < points.length; i++) {
+    const p = points[i - 1], q = points[i], cuts = []
+    for (const f of GRID_LINES) {
+      const fp = f(p), fq = f(q)
+      if (fp === fq) continue
+      for (let k = Math.ceil(Math.min(fp, fq) / step); k <= Math.floor(Math.max(fp, fq) / step); k++) {
+        const t = (k * step - fp) / (fq - fp)
+        if (t > 0.001 && t < 0.999) cuts.push(t)
+      }
+    }
+    cuts.sort((a, b) => a - b).forEach(t => dense.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] === undefined ? undefined : p[2] + (q[2] - p[2]) * t, p[3] || q[3]]))
+    dense.push(q)
+  }
+  return dense
+}
+
+function* polygonGeometry(rings, lift, color) {
   const shape = new THREE.Shape(rings[0].map(([x, z]) => new THREE.Vector2(x, -z)))
   rings.slice(1).forEach(hole => shape.holes.push(new THREE.Path(hole.map(([x, z]) => new THREE.Vector2(x, -z)))))
   const base = new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2)
@@ -1027,7 +1088,9 @@ function polygonGeometry(rings, lift, color) {
   const stack = []
   for (let i = 0; i < index.length; i += 3) stack.push([0, 1, 2].map(k => [source[index[i + k] * 3], source[index[i + k] * 3 + 2]]))
   const positions = [], normals = [], colors = []
+  let work = 0
   while (stack.length) {
+    if (++work % 300 === 0) yield
     const [a, b, c] = stack.pop()
     const lengths = [Math.hypot(b[0] - a[0], b[1] - a[1]), Math.hypot(c[0] - b[0], c[1] - b[1]), Math.hypot(a[0] - c[0], a[1] - c[1])]
     const longest = lengths.indexOf(Math.max(...lengths))
@@ -1037,8 +1100,12 @@ function polygonGeometry(rings, lift, color) {
       stack.push([p, m, r], [m, q, r])
       continue
     }
-    const tri = upward([a[0], 0, a[1]], [b[0], 0, b[1]], [c[0], 0, c[1]])
-    tri.forEach(([x, , z]) => { positions.push(x, terrainHeight(x, z) + lift, z); normals.push(0, 1, 0); colors.push(color.r, color.g, color.b) })
+    for (const piece of groundPieces([a, b, c])) {
+      for (let k = 1; k + 1 < piece.length; k++) {
+        const tri = upward([piece[0][0], 0, piece[0][1]], [piece[k][0], 0, piece[k][1]], [piece[k + 1][0], 0, piece[k + 1][1]])
+        tri.forEach(([x, , z]) => { positions.push(x, terrainHeight(x, z) + lift, z); normals.push(0, 1, 0); colors.push(color.r, color.g, color.b) })
+      }
+    }
   }
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
@@ -1048,7 +1115,8 @@ function polygonGeometry(rings, lift, color) {
 }
 
 function curb(ring, top, bottom, parts) {
-  const upper = ring.map(([x, z]) => [x, terrainHeight(x, z) + top, z]), lower = ring.map(([x, z]) => [x, terrainHeight(x, z) + bottom, z])
+  const dense = alongGround(ring)
+  const upper = dense.map(([x, z]) => [x, terrainHeight(x, z) + top, z]), lower = dense.map(([x, z]) => [x, terrainHeight(x, z) + bottom, z])
   parts.push(paint(skirt(upper, lower), COLORS.curb))
 }
 
@@ -1095,12 +1163,13 @@ function buildAsphaltCell(kx, kz) {
 function placeAsphaltStep(cell, data) {
   const groups = newGroups(), box = cellBox(cell.kx, cell.kz, 0)
   const tasks = [
-    ...data.asphalt.map(polygon => () => groups.asphalt.push(polygonGeometry(polygon, 0.22, COLORS.road))),
-    ...data.walkways.map(polygon => () => { groups.paving.push(polygonGeometry(polygon, 0.3, COLORS.sidewalk)); polygon.forEach(ring => curb(ring, 0.3, 0.16, groups.plain)) }),
-    ...cell.roads.map(road => () => piecesIn(road.samples, box).forEach(points => roadMarkings(road, points, groups)))
-  ]
+    ...data.asphalt.map(polygon => function* () { groups.asphalt.push(yield* polygonGeometry(polygon, 0.22, COLORS.road)) }),
+    ...data.walkways.map(polygon => function* () { groups.paving.push(yield* polygonGeometry(polygon, 0.3, COLORS.sidewalk)); polygon.forEach(ring => curb(ring, 0.3, 0.16, groups.plain)) }),
+    ...cell.roads.map(road => function* () { piecesIn(road.samples, box).forEach(points => roadMarkings(road, points, groups)) })
+  ].map(task => task())
   return () => {
-    for (let k = 0; k < 2 && tasks.length; k++) tasks.shift()()
+    const start = performance.now()
+    while (tasks.length && performance.now() - start < 3) { if (tasks[0].next().done) tasks.shift() }
     if (tasks.length) return false
     const meshes = mergeGroups(groups)
     meshes.forEach(mesh => { mesh.castShadow = false })
