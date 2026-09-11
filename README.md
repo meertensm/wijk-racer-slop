@@ -41,7 +41,7 @@ bin/tile 3 -2 --seams                  # één tegel plus buren maken en de nade
 
 Per NPC-klasse (`server/npcs/`) staan gedrag, beloning, dichtheid, stem en zinnen bij elkaar. Voorbeeld: `Beagle::DENSITY = 0.3` zet 30 % van de beagle-plekken aan.
 
-Punten: elke kill is 1 coin, Speakerboy 5, een drol oprapen 0,5; de dubbele combo over de uitlater geeft twee halve coins extra. Een turbo kost 5 coins en een beagle raken zet je score op nul. Alles staat in `Game` en in `REWARD` per NPC-klasse.
+Punten: elke kill is 1 coin, Speakerboy 5, een drol oprapen 0,5; de dubbele combo over de uitlater geeft twee halve coins extra. Een turbo kost 5 coins en verdubbelt vijf seconden lang alle punten; nog eens Shift tijdens de turbo geeft nitro (opnieuw 5 coins, twee blauwe vlammen, nog sneller). Een beagle raken zet je score op nul. Alles staat in `Game` en in `REWARD` per NPC-klasse.
 
 Drie kills kort na elkaar maken je gezocht: een politie-Panda (`Politie`, `server/npcs/politie.rb`) verschijnt achter je en jaagt op je met sirene. Sta je langer dan een seconde stil binnen bereik, dan ben je opgepakt en verlies je de helft van je coins. Rij hem 450 m van je af en hij geeft op.
 

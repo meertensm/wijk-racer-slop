@@ -1,6 +1,6 @@
 class Player
   attr_reader :id, :client, :name, :car, :known
-  attr_accessor :dead_until, :last_seen
+  attr_accessor :dead_until, :last_seen, :turbo_until
 
   def initialize(id, client, name, world)
     @id     = id
@@ -13,6 +13,10 @@ class Player
   def rename(name)
     name  = name.to_s.strip[0, 16]
     @name = name.empty? ? 'Panda' : name
+  end
+
+  def turbo?(now)
+    !turbo_until.nil? && now < turbo_until
   end
 
   def alive?

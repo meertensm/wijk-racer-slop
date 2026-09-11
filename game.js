@@ -713,7 +713,7 @@ function prepareRoad(road, bigWater) {
   const key = ([x, z]) => `${x},${z}`
   road.hs = road.p.map(([x, z]) => terrainHeight(x, z))
   if (road.kind === 'water') {
-    road.hs = road.level === undefined ? road.hs.map(h => h + 0.04) : road.p.map(() => road.level + 0.2)
+    road.hs = road.p.map(([x, z], i) => road.level === undefined || Math.abs(road.level + 0.2 - road.hs[i]) > 3 ? road.hs[i] + 0.04 : road.level + 0.2)
   } else if (road.bridge) {
     const [mx, mz] = road.p[Math.floor(road.p.length / 2)]
     const waterLevel = Math.max(-Infinity, ...bigWater.filter(water => polylineDistance(mx, mz, water.p) < water.w).map(water => water.level + 7))
@@ -1201,33 +1201,55 @@ async function awaitAsphalt(reach) {
 }
 
 function bridge(points, width, parts) {
-  const sides = edges(points, width + 1)
-  const ground = points.map(([x, z]) => terrainHeight(x, z))
+  const sides = edges(points, width + 1.2), inner = edges(points, width + 0.3)
+  const concrete = COLORS.concrete, dark = COLORS.concrete.clone().multiplyScalar(0.72), steel = COLORS.rail
+  const shift = (line, dy) => line.map(([x, y, z]) => [x, y + dy, z])
   for (const side of [0, 1]) {
-    const top = sides.map(pair => pair[side])
-    parts.push(paint(skirt(top, top.map(([x, y, z]) => [x, y - 1.2, z])), COLORS.concrete))
-    parts.push(paint(skirt(top.map(([x, y, z]) => [x, y + 0.35, z]), top), COLORS.concrete))
-    parts.push(paint(skirt(top.map(([x, y, z]) => [x, y + 1.1, z]), top.map(([x, y, z]) => [x, y + 1.02, z])), COLORS.rail))
-    parts.push(paint(skirt(top.map(([x, y, z]) => [x, y + 0.72, z]), top.map(([x, y, z]) => [x, y + 0.68, z])), COLORS.rail))
-    let along = 0
+    const top = sides.map(pair => pair[side]), lip = inner.map(pair => pair[side])
+    parts.push(paint(skirt(shift(top, 0.05), shift(top, -1.1)), concrete))
+    parts.push(paint(skirt(shift(top, 0.5), shift(top, 0.05)), concrete))
+    parts.push(paint(skirt(shift(lip, 0.5), shift(lip, 0.06)), concrete))
+    parts.push(paint(skirt(shift(top, 0.5), shift(lip, 0.5)), dark))
+    parts.push(paint(skirt(shift(top, 1.18), shift(top, 1.1)), steel))
+    parts.push(paint(skirt(shift(top, 0.86), shift(top, 0.82)), steel))
+    let along = 2
     top.forEach(([x, y, z], i) => {
       if (i) along += Math.hypot(x - top[i - 1][0], z - top[i - 1][2])
-      if (i && along < 2) return
+      if (along < 2) return
       along = 0
-      parts.push(paint(new THREE.CylinderGeometry(0.04, 0.04, 0.75, 5).translate(x, y + 0.72, z), COLORS.rail))
+      parts.push(paint(new THREE.BoxGeometry(0.07, 0.7, 0.07).translate(x, y + 0.85, z), steel))
     })
   }
-  parts.push(paint(skirt(sides.map(pair => [pair[0][0], pair[0][1] - 1.2, pair[0][2]]), sides.map(pair => [pair[1][0], pair[1][1] - 1.2, pair[1][2]])), COLORS.concrete))
-  let travelled = 0
-  for (let i = 1; i < points.length; i++) {
-    travelled += Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1])
-    if (travelled >= 25) {
-      travelled = 0
-      const [x, z, y] = points[i]
-      const depth = y - 1.2 - ground[i] + 1
-      parts.push(paint(new THREE.CylinderGeometry(1, 1.2, depth, 8).translate(x, y - 1.2 - depth / 2, z), COLORS.concrete))
+  parts.push(paint(skirt(shift(sides.map(pair => pair[0]), -1.1), shift(sides.map(pair => pair[1]), -1.1)), dark))
+  const heading = i => Math.atan2(points[Math.min(i + 1, points.length - 1)][0] - points[Math.max(i - 1, 0)][0], points[Math.min(i + 1, points.length - 1)][1] - points[Math.max(i - 1, 0)][1])
+  const placed = (geometry, angle, x, y, z) => parts.push(paint(geometry.rotateY(angle).translate(x, y, z), concrete))
+  let travelled = 12, lit = 0
+  points.forEach(([x, z, y], i) => {
+    if (i) travelled += Math.hypot(x - points[i - 1][0], z - points[i - 1][1])
+    const angle = heading(i), nx = Math.cos(angle), nz = -Math.sin(angle), ground = terrainHeight(x, z)
+    if ((i === 0 || i === points.length - 1) && y - 1.1 - ground > 0.6) {
+      const height = y - 1.1 - ground + 0.6
+      placed(new THREE.BoxGeometry(width + 1.6, height, 2.4), angle, x, ground - 0.6 + height / 2, z)
     }
-  }
+    if (travelled >= 22 && i && i < points.length - 1 && y - 1.1 - ground > 1) {
+      travelled = 0
+      const depth = y - 1.1 - ground + 1.5
+      placed(new THREE.BoxGeometry(width + 0.8, 0.9, 1.6), angle, x, y - 1.55, z)
+      for (const side of [-1, 1]) {
+        const off = side * (width / 2 - 0.5)
+        placed(new THREE.BoxGeometry(1.0, depth, 1.3), angle, x + nx * off, y - 1.1 - depth / 2, z + nz * off)
+      }
+    }
+    if (i) lit += Math.hypot(x - points[i - 1][0], z - points[i - 1][1])
+    if (lit >= 24 || i === 0) {
+      lit = 0
+      const off = width / 2 + 0.45
+      const px = x + nx * off, pz = z + nz * off
+      parts.push(paint(new THREE.BoxGeometry(0.12, 5, 0.12).translate(px, y + 3, pz), steel))
+      parts.push(paint(new THREE.BoxGeometry(1.4, 0.08, 0.08).rotateY(angle).translate(px - nx * 0.6, y + 5.4, pz - nz * 0.6), steel))
+      parts.push(paint(new THREE.BoxGeometry(0.55, 0.16, 0.3).rotateY(angle).translate(px - nx * 1.3, y + 5.32, pz - nz * 1.3), new THREE.Color(0xf4f1dc)))
+    }
+  })
 }
 
 function embankment(points, width, parts) {
@@ -2006,7 +2028,8 @@ function buildSky() {
   clouds.castShadow = false
 }
 
-const bodyParts = [], brakeLights = []
+const bodyParts = [], brakeLights = [], wheels = []
+let wheelSpin = 0
 let flame = null, shiftDownAt = 0
 const CLEAN = new THREE.Color(0xefe6cf), FILTHY = new THREE.Color(0x4a3a24)
 
@@ -2047,32 +2070,58 @@ function buildTrains(tile) {
   })
 }
 
-function pandaParts(part, body, glass = 0x2b3a4a, plastic = 0x3a3a3a, lights = null) {
-  const shell = [part(1.46, 0.44, 3.3, body, 0, 0.62, 0), part(1.4, 0.56, 2.3, body, 0, 1.13, -0.4)]
-  part(1.44, 0.2, 0.95, body, 0, 0.8, 1.15)
-  part(1.48, 0.16, 3.42, plastic, 0, 0.42, 0)
-  part(1.5, 0.14, 0.14, plastic, 0, 0.5, 1.72)
-  part(1.5, 0.14, 0.14, plastic, 0, 0.5, -1.72)
-  part(0.7, 0.16, 0.03, 0x111111, 0, 0.78, 1.66)
-  part(0.7, 0.02, 0.03, 0x777777, 0, 0.78, 1.67)
-  part(0.3, 0.1, 0.02, 0xf4f4f4, 0, 0.6, 1.8)
-  part(1.36, 0.03, 1.6, body, 0, 1.42, -0.4)
+function pandaParts(part, body, glass = 0x1f2a36, plastic = 0x2e2e2e, lights = null) {
+  const roof = new THREE.Color(body).offsetHSL(0, 0, -0.03).getHex(), frame = 0x1a1a1a, chrome = 0xd8d8d8
+  const shell = [part(1.46, 0.46, 3.3, body, 0, 0.63, 0), part(1.38, 0.54, 2.2, body, 0, 1.13, -0.42)]
+  part(1.42, 0.03, 1.55, roof, 0, 1.415, -0.4)
+  part(1.44, 0.22, 0.98, body, 0, 0.79, 1.14)
+  part(1.42, 0.02, 0.9, roof, 0, 0.905, 1.16)
+  part(1.5, 0.18, 3.44, plastic, 0, 0.4, 0)
+  part(1.52, 0.16, 0.16, plastic, 0, 0.47, 1.72)
+  part(1.52, 0.16, 0.16, plastic, 0, 0.47, -1.72)
+  part(1.54, 0.03, 0.17, 0x111111, 0, 0.5, 1.73)
+  part(1.54, 0.03, 0.17, 0x111111, 0, 0.5, -1.73)
+  part(0.76, 0.2, 0.04, frame, 0, 0.78, 1.665)
+  for (let k = 0; k < 4; k++) part(0.7, 0.012, 0.045, chrome, 0, 0.7 + k * 0.045, 1.67)
+  part(0.16, 0.05, 0.05, chrome, 0, 0.9, 1.68)
+  part(0.36, 0.09, 0.02, 0xfafafa, 0, 0.58, 1.81)
+  part(0.05, 0.09, 0.022, 0x2050c0, -0.155, 0.58, 1.811)
+  part(0.36, 0.09, 0.02, 0xfafafa, 0, 0.6, -1.81)
+  part(0.05, 0.09, 0.022, 0x2050c0, -0.155, 0.6, -1.811)
+  part(0.9, 0.012, 0.012, frame, 0, 1.44, 0.36)
+  part(0.9, 0.012, 0.012, frame, 0, 1.44, -1.17)
+  part(0.06, 0.04, 0.16, 0x444444, -0.42, 0.33, -1.74)
   for (const side of [-1, 1]) {
-    part(0.3, 0.14, 0.03, 0xf7f0c8, side * 0.5, 0.78, 1.66)
-    const light = part(0.28, 0.12, 0.03, 0xc8281e, side * 0.52, 0.74, -1.66)
+    part(0.32, 0.16, 0.04, frame, side * 0.5, 0.78, 1.665)
+    part(0.28, 0.12, 0.03, 0xf7f0c8, side * 0.5, 0.78, 1.675)
+    part(0.1, 0.1, 0.03, 0xff9a1a, side * 0.7, 0.78, 1.675)
+    part(0.3, 0.16, 0.03, frame, side * 0.52, 0.74, -1.665)
+    const light = part(0.26, 0.12, 0.03, 0xc8281e, side * 0.52, 0.76, -1.675)
     if (lights) lights.push(light)
-    part(0.02, 0.4, 0.9, glass, side * 0.72, 1.2, 0.2)
-    part(0.02, 0.4, 0.95, glass, side * 0.72, 1.2, -0.9)
-    part(0.08, 0.1, 0.16, plastic, side * 0.77, 1.05, 0.6)
-    part(0.02, 0.05, 0.16, plastic, side * 0.74, 0.92, 0.05)
-    part(0.02, 0.05, 0.16, plastic, side * 0.74, 0.92, -1.0)
-    part(0.06, 0.3, 0.72, plastic, side * 0.72, 0.36, 1.08)
-    part(0.06, 0.3, 0.72, plastic, side * 0.72, 0.36, -1.08)
-    part(0.04, 0.03, 0.03, 0xffb000, side * 0.72, 0.62, 1.7)
+    part(0.1, 0.05, 0.03, 0xf4f4f4, side * 0.52, 0.7, -1.675)
+    part(0.02, 0.44, 0.94, frame, side * 0.705, 1.2, 0.18)
+    part(0.02, 0.44, 0.98, frame, side * 0.705, 1.2, -0.92)
+    part(0.02, 0.38, 0.86, glass, side * 0.715, 1.2, 0.18)
+    part(0.02, 0.38, 0.9, glass, side * 0.715, 1.2, -0.92)
+    part(0.02, 0.9, 0.012, frame, side * 0.735, 0.85, -0.42)
+    part(0.02, 0.9, 0.012, frame, side * 0.735, 0.85, 0.72)
+    part(0.02, 0.9, 0.012, frame, side * 0.735, 0.85, -1.42)
+    part(0.03, 0.04, 0.14, 0x111111, side * 0.745, 0.92, 0.2)
+    part(0.03, 0.04, 0.14, 0x111111, side * 0.745, 0.92, -0.9)
+    part(0.02, 0.05, 2.9, plastic, side * 0.74, 0.7, -0.1)
+    part(0.06, 0.14, 0.1, plastic, side * 0.8, 1.06, 0.62)
+    part(0.02, 0.1, 0.08, 0xbfd6ea, side * 0.83, 1.07, 0.6)
+    part(0.06, 0.32, 0.76, plastic, side * 0.72, 0.36, 1.08)
+    part(0.06, 0.32, 0.76, plastic, side * 0.72, 0.36, -1.08)
+    part(0.02, 0.28, 0.02, frame, side * 0.62, 1.2, 0.72)
+    part(0.02, 0.32, 0.02, frame, side * 0.62, 1.2, -1.42)
   }
-  part(1.3, 0.42, 0.02, glass, 0, 1.2, -1.56)
-  part(0.3, 0.02, 0.04, plastic, 0.35, 0.92, 1.0)
-  part(1.3, 0.5, 0.02, glass, 0, 1.17, 0.74).rotation.x = -0.4
+  part(1.32, 0.48, 0.02, frame, 0, 1.2, -1.545)
+  part(1.24, 0.4, 0.02, glass, 0, 1.2, -1.555)
+  part(0.36, 0.012, 0.03, 0x111111, 0.3, 0.955, 0.98)
+  part(0.36, 0.012, 0.03, 0x111111, -0.3, 0.955, 0.98)
+  part(1.34, 0.54, 0.02, frame, 0, 1.17, 0.735).rotation.x = -0.4
+  part(1.26, 0.46, 0.02, glass, 0, 1.17, 0.745).rotation.x = -0.4
   return shell
 }
 
@@ -2117,17 +2166,23 @@ function buildCar() {
   }
   part(0.5, 0.14, 0.04, 0x222222, 0, 0.72, 1.7)
 
-  const tyre = new THREE.CylinderGeometry(0.28, 0.28, 0.16, 12).rotateZ(Math.PI / 2)
-  const cap = new THREE.CylinderGeometry(0.16, 0.16, 0.17, 10).rotateZ(Math.PI / 2)
+  const tyre = new THREE.CylinderGeometry(0.28, 0.28, 0.18, 16).rotateZ(Math.PI / 2)
+  const rim = new THREE.CylinderGeometry(0.17, 0.17, 0.19, 12).rotateZ(Math.PI / 2)
+  const hub = new THREE.CylinderGeometry(0.05, 0.05, 0.2, 8).rotateZ(Math.PI / 2)
   for (const [x, z] of [[-0.66, 1.08], [0.66, 1.08], [-0.66, -1.08], [0.66, -1.08]]) {
-    for (const [geometry, color] of [[tyre, 0x111111], [cap, 0xbdbdbd]]) {
+    const wheel = new THREE.Group()
+    wheel.rotation.order = 'YXZ'
+    for (const [geometry, color] of [[tyre, 0x151515], [rim, 0xc9c9c9], [hub, 0x555555]]) {
       const mesh = new THREE.Mesh(geometry, solid(color))
-      mesh.position.set(x, 0.28, z)
       mesh.castShadow = true
-      car.add(mesh)
-      mesh.userData.position = mesh.position.clone()
-      mesh.userData.rotation = mesh.rotation.clone()
+      wheel.add(mesh)
     }
+    for (let k = 0; k < 4; k++) { const slot = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.03, 0.05), solid(0x333333)); slot.position.set(0, Math.sin(k * Math.PI / 2) * 0.1, Math.cos(k * Math.PI / 2) * 0.1); wheel.add(slot) }
+    wheel.position.set(x, 0.28, z)
+    car.add(wheel)
+    wheel.userData.position = wheel.position.clone()
+    wheel.userData.rotation = wheel.rotation.clone()
+    wheels.push({ wheel, front: z > 0 })
   }
   flame = turboFlame(car)
   scene.add(car)
@@ -2135,14 +2190,18 @@ function buildCar() {
 }
 
 function turboFlame(group) {
-  const mesh = new THREE.Mesh(new THREE.ConeGeometry(0.16, 1.1, 8).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xff8a1a, transparent: true, opacity: 0.85 }))
-  mesh.material.userData.outlineParameters = { visible: false }
-  mesh.position.set(-0.45, 0.4, -2.25)
-  mesh.visible = false
-  mesh.userData.position = mesh.position.clone()
-  mesh.userData.rotation = mesh.rotation.clone()
-  group.add(mesh)
-  return mesh
+  const flames = new THREE.Group()
+  for (const x of [-0.45, 0.45]) {
+    const mesh = new THREE.Mesh(new THREE.ConeGeometry(0.16, 1.1, 8).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xff8a1a, transparent: true, opacity: 0.85 }))
+    mesh.material.userData.outlineParameters = { visible: false }
+    mesh.position.set(x, 0.4, -2.25)
+    flames.add(mesh)
+  }
+  flames.visible = false
+  flames.userData.position = flames.position.clone()
+  flames.userData.rotation = flames.rotation.clone()
+  group.add(flames)
+  return flames
 }
 
 // WALKERS:
@@ -2162,27 +2221,62 @@ function merged(parts) {
 }
 
 function beagleGeometry() {
-  const parts = []
-  box(parts, 0.28, 0.26, 0.7, 0xf2ede4, 0, 0.38, 0)
-  box(parts, 0.29, 0.12, 0.42, 0x3b2a1e, 0, 0.5, -0.08)
-  box(parts, 0.22, 0.22, 0.28, 0xa5683a, 0, 0.5, 0.42)
-  box(parts, 0.14, 0.12, 0.14, 0xf2ede4, 0, 0.44, 0.6)
-  box(parts, 0.04, 0.04, 0.04, 0x111111, 0, 0.47, 0.68)
-  for (const side of [-1, 1]) box(parts, 0.06, 0.2, 0.14, 0x6b3f22, side * 0.14, 0.42, 0.42)
-  for (const [x, z] of [[-0.1, 0.25], [0.1, 0.25], [-0.1, -0.25], [0.1, -0.25]]) box(parts, 0.08, 0.26, 0.08, 0xf2ede4, x, 0.13, z)
-  box(parts, 0.06, 0.06, 0.32, 0xf2ede4, 0, 0.55, -0.42, -0.9)
+  const parts = [], white = 0xf2ede4, brown = 0xa5683a, black = 0x2b2118
+  box(parts, 0.3, 0.28, 0.72, white, 0, 0.4, 0)
+  box(parts, 0.31, 0.14, 0.44, black, 0, 0.53, -0.1)
+  box(parts, 0.31, 0.1, 0.16, brown, 0, 0.5, 0.2)
+  box(parts, 0.26, 0.26, 0.28, brown, 0, 0.56, 0.44)
+  box(parts, 0.18, 0.14, 0.2, white, 0, 0.5, 0.6)
+  box(parts, 0.05, 0.05, 0.05, black, 0, 0.53, 0.71)
+  box(parts, 0.05, 0.06, 0.05, 0x2a1a12, 0, 0.47, 0.7, 0.4)
+  box(parts, 0.24, 0.05, 0.05, 0xc0392b, 0, 0.44, 0.31)
+  for (const side of [-1, 1]) {
+    box(parts, 0.07, 0.22, 0.14, 0x6b3f22, side * 0.15, 0.48, 0.42)
+    box(parts, 0.035, 0.035, 0.02, 0x111111, side * 0.06, 0.61, 0.58)
+    box(parts, 0.045, 0.045, 0.01, 0xffffff, side * 0.06, 0.61, 0.575)
+  }
+  for (const [x, z] of [[-0.11, 0.26], [0.11, 0.26], [-0.11, -0.26], [0.11, -0.26]]) {
+    box(parts, 0.09, 0.26, 0.09, white, x, 0.13, z)
+    box(parts, 0.1, 0.05, 0.11, 0x3b2a1e, x, 0.025, z + 0.01)
+  }
+  box(parts, 0.06, 0.06, 0.32, white, 0, 0.6, -0.44, -0.9)
+  box(parts, 0.07, 0.07, 0.08, black, 0, 0.5, -0.36)
   return merged(parts)
 }
 
-function man(parts, hair, shirt, skin = 0xe8b894, trousers = 0x2f3a4a) {
+function face(parts, skin, y, dz = 0) {
+  const shade = new THREE.Color(skin).offsetHSL(0, 0, -0.08).getHex()
+  box(parts, 0.22, 0.26, 0.24, skin, 0, y, dz)
   for (const side of [-1, 1]) {
-    box(parts, 0.16, 0.8, 0.2, trousers, side * 0.1, 0.4, 0)
-    box(parts, 0.12, 0.6, 0.14, shirt, side * 0.27, 1.12, 0)
-    box(parts, 0.1, 0.12, 0.12, skin, side * 0.27, 0.78, 0)
+    box(parts, 0.03, 0.06, 0.05, skin, side * 0.125, y + 0.01, dz)
+    box(parts, 0.04, 0.035, 0.02, 0xf4f4f4, side * 0.05, y + 0.03, dz + 0.12)
+    box(parts, 0.02, 0.025, 0.022, 0x1a1a1a, side * 0.05, y + 0.03, dz + 0.121)
+    box(parts, 0.06, 0.014, 0.02, 0x2a1d12, side * 0.05, y + 0.075, dz + 0.12)
   }
-  box(parts, 0.4, 0.6, 0.24, shirt, 0, 1.1, 0)
-  box(parts, 0.22, 0.26, 0.24, skin, 0, 1.55, 0)
-  if (hair) box(parts, 0.23, 0.07, 0.25, 0x3a2a1a, 0, 1.71, 0)
+  box(parts, 0.03, 0.05, 0.04, shade, 0, y - 0.01, dz + 0.13)
+  box(parts, 0.07, 0.012, 0.02, 0x7a3b30, 0, y - 0.07, dz + 0.12)
+}
+
+function man(parts, hair, shirt, skin = 0xe8b894, trousers = 0x2f3a4a, shoes = 0x1e1a18) {
+  const dark = new THREE.Color(shirt).offsetHSL(0, 0, -0.1).getHex()
+  for (const side of [-1, 1]) {
+    box(parts, 0.12, 0.07, 0.27, shoes, side * 0.1, 0.035, 0.03)
+    box(parts, 0.15, 0.72, 0.19, trousers, side * 0.1, 0.44, 0)
+    box(parts, 0.12, 0.32, 0.15, shirt, side * 0.28, 1.2, 0)
+    box(parts, 0.1, 0.3, 0.13, shirt, side * 0.29, 0.92, 0.04, 0.22)
+    box(parts, 0.09, 0.1, 0.1, skin, side * 0.29, 0.76, 0.09)
+  }
+  box(parts, 0.42, 0.05, 0.26, 0x1e1a18, 0, 0.82, 0)
+  box(parts, 0.4, 0.58, 0.24, shirt, 0, 1.11, 0)
+  box(parts, 0.5, 0.1, 0.24, shirt, 0, 1.36, 0)
+  box(parts, 0.14, 0.14, 0.02, dark, 0, 1.31, 0.121)
+  box(parts, 0.1, 0.08, 0.1, skin, 0, 1.42, 0)
+  face(parts, skin, 1.57)
+  if (hair) {
+    box(parts, 0.23, 0.06, 0.25, 0x3a2a1a, 0, 1.72, 0)
+    box(parts, 0.23, 0.14, 0.05, 0x3a2a1a, 0, 1.63, -0.11)
+    box(parts, 0.22, 0.03, 0.06, 0x3a2a1a, 0, 1.685, 0.1)
+  }
 }
 
 function zwerverGeometry() {
@@ -2196,16 +2290,27 @@ function zwerverGeometry() {
 }
 
 function zombieGeometry() {
-  const parts = []
+  const parts = [], skin = 0x7a9a5a, rag = 0x4a5a4a, pants = 0x3a3f3a
+  box(parts, 0.13, 0.07, 0.27, 0x2a2622, -0.1, 0.035, 0.03)
+  box(parts, 0.1, 0.06, 0.2, skin, 0.1, 0.03, 0.03)
+  box(parts, 0.15, 0.72, 0.19, pants, -0.1, 0.44, 0)
+  box(parts, 0.15, 0.5, 0.19, pants, 0.1, 0.55, 0)
+  box(parts, 0.13, 0.22, 0.17, skin, 0.1, 0.19, 0)
+  box(parts, 0.4, 0.58, 0.24, rag, 0, 1.11, 0)
+  box(parts, 0.2, 0.2, 0.25, skin, 0.1, 1.0, 0)
+  box(parts, 0.14, 0.14, 0.02, 0x6a1a1a, -0.08, 1.2, 0.125)
+  box(parts, 0.5, 0.1, 0.24, rag, 0, 1.36, 0)
   for (const side of [-1, 1]) {
-    box(parts, 0.16, 0.8, 0.2, 0x3a3f3a, side * 0.1, 0.4, 0)
-    box(parts, 0.12, 0.14, 0.6, 0x7a9a5a, side * 0.27, 1.3, 0.3)
-    box(parts, 0.1, 0.12, 0.12, 0x7a9a5a, side * 0.27, 1.3, 0.62)
+    box(parts, 0.12, 0.14, 0.62, skin, side * 0.28, 1.3, 0.3)
+    box(parts, 0.13, 0.15, 0.18, rag, side * 0.28, 1.3, 0.05)
+    box(parts, 0.1, 0.12, 0.12, skin, side * 0.28, 1.3, 0.64)
   }
-  box(parts, 0.4, 0.6, 0.24, 0x4a5a4a, 0, 1.1, 0)
-  box(parts, 0.22, 0.26, 0.24, 0x7a9a5a, 0, 1.52, 0.05, 0.25)
-  box(parts, 0.05, 0.05, 0.05, 0xff2a2a, -0.06, 1.56, 0.17)
-  box(parts, 0.05, 0.05, 0.05, 0xff2a2a, 0.06, 1.56, 0.17)
+  box(parts, 0.1, 0.08, 0.1, skin, 0.02, 1.42, 0)
+  box(parts, 0.22, 0.26, 0.24, skin, 0, 1.54, 0.05, 0.25)
+  box(parts, 0.05, 0.05, 0.03, 0xff2a2a, -0.06, 1.58, 0.17)
+  box(parts, 0.05, 0.05, 0.03, 0xff2a2a, 0.06, 1.58, 0.17)
+  box(parts, 0.1, 0.03, 0.03, 0x3a0c0c, 0, 1.47, 0.17)
+  box(parts, 0.1, 0.08, 0.1, 0x3a5a3a, -0.08, 1.7, 0.02)
   return merged(parts)
 }
 
@@ -2247,9 +2352,10 @@ function tattooManGeometry() {
 
 function dogWalkerGeometry() {
   const parts = []
-  man(parts, true, 0x9a4a3a, 0xe8b894, 0x3a5a8a)
+  man(parts, false, 0x9a4a3a, 0xe8b894, 0x3a5a8a)
   box(parts, 0.44, 0.5, 0.28, 0x3b5b3b, 0, 1.12, 0)
-  box(parts, 0.24, 0.05, 0.26, 0x8f8f8f, 0, 1.7, 0)
+  box(parts, 0.24, 0.07, 0.26, 0x9a9a9a, 0, 1.72, 0)
+  box(parts, 0.24, 0.12, 0.05, 0x9a9a9a, 0, 1.64, -0.11)
   for (const side of [-1, 1]) {
     box(parts, 0.09, 0.06, 0.02, 0x222222, side * 0.06, 1.58, 0.13)
     box(parts, 0.17, 0.08, 0.28, 0xf2f2f2, side * 0.1, 0.04, 0.03)
@@ -2271,6 +2377,8 @@ function labradoodleGeometry() {
     box(parts, 0.09, 0.18, 0.12, fur, side * 0.11, 0.09, dz - 0.2)
   }
   box(parts, 0.04, 0.04, 0.04, 0x222222, 0, 0.6, dz + 0.53)
+  for (const side of [-1, 1]) box(parts, 0.03, 0.03, 0.02, 0x111111, side * 0.06, 0.68, dz + 0.5)
+  box(parts, 0.24, 0.04, 0.05, 0x1f5fbf, 0, 0.5, dz + 0.3)
   box(parts, 0.05, 0.05, 0.25, fur, 0, 0.5, dz - 0.4, -0.6)
   box(parts, 0.09, 0.07, 0.09, 0x4a2e12, 0.02, 0.035, dz - 0.42)
   box(parts, 0.07, 0.06, 0.07, 0x4a2e12, -0.02, 0.09, dz - 0.42)
@@ -2434,7 +2542,7 @@ function updateNpcs(dt, now) {
 function contact(npc, perf) {
   sendPos(perf, true)
   if (npc.kind === 'labradoodle' || npc.kind === 'politie') return
-  if (describe(npc.kind).reward !== null) { npc.predictedAt = perf; killEffects(npc) }
+  if (describe(npc.kind).reward !== null) { npc.predictedAt = perf; killEffects(npc, describe(npc.kind).reward * (perf < (state.turboUntil || 0) ? 2 : 1)) }
   else explode(describe(npc.kind).label)
 }
 
@@ -2465,9 +2573,9 @@ function markDead(npc) {
   scene.add(npc.splat)
 }
 
-function killEffects(npc) {
+function killEffects(npc, reward = describe(npc.kind).reward) {
   markDead(npc)
-  const gerard = npc.kind === 'dogwalker', { label, reward } = describe(npc.kind)
+  const gerard = npc.kind === 'dogwalker', { label } = describe(npc.kind)
   streetEl.textContent = `${label} ${gerard ? 'overreden' : 'geplet'}: +${reward.toLocaleString('nl-NL')} coin`
   thud(gerard ? 1 : 0.8)
   scream(gerard ? 'man' : npc.kind)
@@ -3458,18 +3566,18 @@ function applyPlayers(rows) {
 }
 
 const EVENTS = {
-  kill(id, by) {
+  kill(id, by, reward) {
     const npc = npcs.get(id)
     if (!npc) return
     if (by !== myId) markDead(npc)
     else if (npc.predictedAt) delete npc.predictedAt
-    else killEffects(npc)
+    else killEffects(npc, reward)
   },
-  combo(id, by, stage) {
+  combo(id, by, stage, amount) {
     if (by !== myId) return
     state.blood = 45
     state.bloodAt = [state.x, state.z]
-    streetEl.textContent = stage === 1 ? 'Achteruit over de uitlater: +½ coin' : 'En nog eens vooruit: +½ coin'
+    streetEl.textContent = `${stage === 1 ? 'Achteruit over de uitlater' : 'En nog eens vooruit'}: +${amount.toLocaleString('nl-NL')} coin`
   },
   boom(player, id) {
     if (player !== myId) return
@@ -3477,7 +3585,7 @@ const EVENTS = {
     explosion.confirmed = true
   },
   respawn(player) { if (player === myId) respawn() },
-  turbo(player) { const other = others.get(player); if (other) other.turboUntil = performance.now() + 5000 },
+  turbo(player, level) { const other = others.get(player); if (other) { other.turboUntil = performance.now() + 5000; other.nitro = level === 2 } },
   gone(id) { removeNpc(id) },
   wanted(player, level) {
     if (player === myId) { wanted = level; wantedEl.hidden = !level; wantedEl.textContent = level ? '★ GEZOCHT' : '' }
@@ -3563,8 +3671,7 @@ function updateMultiplayer(dt, now) {
       const size = Math.max(1, Math.hypot(group.position.x - state.x, group.position.z - state.z) / 30)
       other.label.scale.set(4 * size, size, 1)
       other.label.position.y = 2.6 + (size - 1) * 1.2
-      other.flame.visible = now < (other.turboUntil || 0)
-      if (other.flame.visible) other.flame.scale.set(0.7 + Math.random() * 0.6, 0.7 + Math.random() * 0.6, 0.6 + Math.random() * 0.9)
+      setFlame(other.flame, now < (other.turboUntil || 0), other.nitro)
     })
 }
 
@@ -3660,14 +3767,34 @@ addEventListener('keyup', event => {
 })
 
 function startTurbo() {
-  const now = performance.now()
-  if (now < (state.turboReadyAt || 0) || explosion) return
-  if (score < 5) { streetEl.textContent = 'Turbo kost 5 coins'; return }
+  const now = performance.now(), turbo = now < (state.turboUntil || 0)
+  if (explosion || (turbo && state.nitro) || (!turbo && now < (state.turboReadyAt || 0))) return
+  if (score < 5) { streetEl.textContent = `${turbo ? 'Nitro' : 'Turbo'} kost 5 coins`; return }
+  state.nitro = turbo
   state.turboUntil = now + 5000
   state.turboReadyAt = now + 15000
-  streetEl.textContent = 'TURBO! (-5 coins)'
-  thud(0.4)
+  shout(turbo ? 'Nitro!' : 'Turbo!')
+  streetEl.textContent = `${turbo ? 'NITRO' : 'TURBO'}! Dubbele punten (-5 coins)`
+  thud(turbo ? 0.7 : 0.4)
   send({ turbo: true })
+}
+
+const shoutEl = document.getElementById('shout')
+
+function shout(text) {
+  shoutEl.textContent = text
+  shoutEl.classList.remove('show')
+  requestAnimationFrame(() => shoutEl.classList.add('show'))
+}
+
+function setFlame(group, on, nitro) {
+  group.visible = on
+  if (!on) return
+  group.children.forEach((cone, i) => {
+    cone.visible = nitro || i === 0
+    cone.material.color.setHex(nitro ? 0x47b6ff : 0xff8a1a)
+    cone.scale.set(0.7 + Math.random() * 0.6, 0.7 + Math.random() * 0.6, (nitro ? 1.1 : 0.6) + Math.random() * 0.9)
+  })
 }
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight
@@ -3738,8 +3865,8 @@ function step(dt, now) {
   state.steer += (wanted - state.steer) * Math.min(1, dt * (wanted ? 4 : 8))
 
   const speed = Math.abs(state.speed)
-  const turbo = now < (state.turboUntil || 0), top = PANDA.topSpeed * (turbo ? 1.35 : 1)
-  if (gas && state.speed >= 0) state.speed = Math.min(state.speed + PANDA.acceleration * (turbo ? 2.6 : 1) * (1 - speed / top) * dt, top)
+  const turbo = now < (state.turboUntil || 0), top = PANDA.topSpeed * (turbo ? (state.nitro ? 1.7 : 1.35) : 1)
+  if (gas && state.speed >= 0) state.speed = Math.min(state.speed + PANDA.acceleration * (turbo ? (state.nitro ? 3.6 : 2.6) : 1) * (1 - speed / top) * dt, top)
   else if (gas) state.speed = Math.min(state.speed + PANDA.braking * dt, 0)
   else if (brake && state.speed > 0) state.speed = Math.max(state.speed - PANDA.braking * dt, 0)
   else if (brake) state.speed = Math.max(state.speed - PANDA.acceleration * 0.5 * dt, -PANDA.reverseSpeed)
@@ -3747,8 +3874,8 @@ function step(dt, now) {
   if (handbrake) state.speed -= Math.sign(state.speed) * Math.min(speed, 16 * dt)
   const lit = brake || handbrake || state.speed < -0.5
   if (lit !== state.lit) { state.lit = lit; brakeLights.forEach(mesh => { mesh.material.color.setHex(lit ? 0xff3b30 : 0xc8281e); mesh.material.emissive.setHex(lit ? 0xc81a10 : 0x000000) }) }
-  if (flame) { flame.visible = turbo && gas; flame.scale.set(0.7 + Math.random() * 0.6, 0.7 + Math.random() * 0.6, 0.6 + Math.random() * 0.9) }
-  if (turbo && !state.turboNoted) { state.turboNoted = true } else if (!turbo && state.turboNoted) { state.turboNoted = false; streetEl.textContent = 'Turbo op' }
+  if (flame) setFlame(flame, turbo && gas, state.nitro)
+  if (turbo && !state.turboNoted) { state.turboNoted = true } else if (!turbo && state.turboNoted) { state.turboNoted = false; state.nitro = false; streetEl.textContent = 'Turbo op' }
 
   const yawRate = Math.min(speed * Math.tan(PANDA.steeringLock) / PANDA.wheelbase, PANDA.grip / Math.max(speed, 0.1))
   state.heading -= state.steer * yawRate * Math.sign(state.speed) * dt
@@ -3794,15 +3921,18 @@ function step(dt, now) {
   state.ride = ride
   state.lean = lean
   car.position.set(state.x, ride, state.z)
+  wheelSpin += state.speed * dt / 0.28
+  wheels.forEach(({ wheel, front }) => wheel.rotation.set(wheelSpin, front ? -state.steer * 0.45 : 0, 0))
   car.rotation.set(-lean[0], state.heading, -lean[1] + state.steer * -0.04 * Math.tanh(state.speed / 10))
 
   let distance = 9 + Math.abs(state.speed) * 0.15, pull = 1
   while (pull > 0.3 && blocked(state.x - fx * distance * pull, state.z - fz * distance * pull)) pull -= 0.1
   distance *= pull
-  const target = new THREE.Vector3(state.x - fx * distance, y + 4.5 + (1 - pull) * 4, state.z - fz * distance)
+  state.camY = suspend(state.camY, ride, dt * 0.4, 3)
+  const target = new THREE.Vector3(state.x - fx * distance, state.camY + 4.5 + (1 - pull) * 4, state.z - fz * distance)
   camera.position.lerp(target, 1 - Math.exp(-dt * 4))
   camera.position.y = Math.max(camera.position.y, terrainHeight(camera.position.x, camera.position.z) + 1.5) + (Math.random() - 0.5) * state.shake
-  camera.lookAt(state.x, y + 1.2, state.z)
+  camera.lookAt(state.x, state.camY + 1.2, state.z)
   camera.rotation.z += Math.sin(now * 0.0027) * 0.14 * state.drunk
   camera.fov = 60 + Math.sin(now * 0.0016) * 7 * state.drunk
   camera.updateProjectionMatrix()

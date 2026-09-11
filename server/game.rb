@@ -38,8 +38,9 @@ class Game
   end
 
   def kill(npc, player)
-    scores.award(player.name, npc.reward)
-    events << ['kill', npc.id, player.id, npc.reward, npc.x.round(1), npc.z.round(1)]
+    reward = npc.reward * multiplier(player)
+    scores.award(player.name, reward)
+    events << ['kill', npc.id, player.id, reward, npc.x.round(1), npc.z.round(1)]
     events << ['score', player.id, scores[player.name]]
     heat_up(player)
   end
@@ -77,8 +78,9 @@ class Game
   end
 
   def award(player, amount, npc, stage)
+    amount *= multiplier(player)
     scores.award(player.name, amount)
-    events << ['combo', npc.id, player.id, stage]
+    events << ['combo', npc.id, player.id, stage, amount]
     events << ['score', player.id, scores[player.name]]
   end
 
@@ -183,8 +185,14 @@ class Game
   def turbo(player)
     return unless player.alive? && scores[player.name] >= TURBO_PRICE
     scores.award(player.name, -TURBO_PRICE)
-    events << ['turbo', player.id]
+    level = player.turbo?(now) ? 2 : 1
+    player.turbo_until = now + 5
+    events << ['turbo', player.id, level]
     events << ['score', player.id, scores[player.name]]
+  end
+
+  def multiplier(player)
+    player.turbo?(now) ? 2 : 1
   end
 
   def leave(client)
@@ -221,7 +229,7 @@ class Game
     return if !player.alive? || Math.hypot(x - from[0], z - from[1]) > 30
     poops.reject! do |poop|
       next false unless poop.near?(player.car.x, player.car.z, 1.4)
-      scores.award(player.name, POOP_REWARD)
+      scores.award(player.name, POOP_REWARD * multiplier(player))
       events << ['unpoop', poop.id, player.id]
       events << ['score', player.id, scores[player.name]]
     end
