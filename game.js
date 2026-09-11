@@ -3875,6 +3875,7 @@ await phase('buildings', () => pumpFor(['buildings'], 0))
 await phase('trees', () => pumpFor(['trees', 'trains'], 0))
 await phase('asphalt', () => awaitAsphalt(1))
 await phase('details', buildDetailsHere)
+if (corners(state.x, state.z, state.heading).some(([cx, cz]) => blocked(cx, cz))) unstick()
 pendingPoops.forEach(addPoop)
 pendingPoops = []
 camera.position.set(state.x - Math.sin(state.heading) * 9, groundHeight(state.x, state.z) + 4.5, state.z - Math.cos(state.heading) * 9)

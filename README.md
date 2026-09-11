@@ -37,7 +37,7 @@ bin/tile 3 -2 --seams                  # één tegel plus buren maken en de nade
 
 ## Server
 
-`server/` is objectgeoriënteerd Ruby: `World`, `Tile`, `Building`, `Road`, `Tree`, `Car`, `Player`, `Poop`, en NPC's als `Zombie < HumanoidNpc < Npc < Entity`. De server is de waarheid: hij simuleert de NPC's van de geladen tegels op 20 Hz, detecteert aanrijdingen, kent coins toe en houdt scores per spelersnaam bij in `data/scores.json`. Clients sturen alleen hun eigen auto en renderen wat ze ontvangen.
+`server/` is objectgeoriënteerd Ruby: `World`, `Tile`, `Building`, `Road`, `Tree`, `Car`, `Player`, `Poop`, en NPC's als `Zombie < HumanoidNpc < Npc < Entity`. De server is de waarheid: hij simuleert de NPC's van de geladen tegels op 20 Hz, detecteert aanrijdingen, kent coins toe en houdt scores per spelersnaam bij in `data/scores.json`. Clients sturen alleen hun eigen auto en renderen wat ze ontvangen. De laatste positie per spelersnaam staat in `data/positions.json`, zodat je na herladen verder gaat waar je was.
 
 Per NPC-klasse (`server/npcs/`) staan gedrag, beloning, dichtheid, stem en zinnen bij elkaar. Voorbeeld: `Beagle::DENSITY = 0.3` zet 30 % van de beagle-plekken aan.
 

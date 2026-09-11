@@ -5,7 +5,7 @@ Dir.chdir(root)
 %w[
   geometry grid entity entities/structure entities/road entities/plant entities/vehicle entities/zone entities/spot entities/place entities/poop
   world voice npc npcs/humanoid_npc npcs/beagle npcs/labradoodle npcs/dog_walker npcs/bald_man npcs/zwerver npcs/junkie npcs/zombie npcs/speakerboy npcs/tattoo_man npcs/politie
-  population player scores game http_request static web_socket client server crowd zones tiles/prefetcher
+  population player scores positions game http_request static web_socket client server crowd zones tiles/prefetcher
   limburg tiles/projection tiles/tile tiles/tile_store tiles/tile_endpoint tiles/nominatim start
   tiles/boundary tiles/overpass tiles/ahn tiles/terrain tiles/scatter tiles/signs tiles/landmarks tiles/tile_builder tiles/tile_generator
 ].each { |file| require "#{root}/server/#{file}" }

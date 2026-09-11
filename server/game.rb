@@ -4,10 +4,11 @@ class Game
   HEAT_PER_KILL, HEAT_DECAY, WANTED_AT, POLICE_ID = 1.0, 1 / 30.0, 2.0, 10**12
   attr_reader :inbox, :now, :world, :crowd, :store
 
-  def initialize(world, store, scores)
+  def initialize(world, store, scores, positions = Positions.new('data/positions.json'))
     @world      = world
     @store      = store
     @scores     = scores
+    @positions  = positions
     @crowd      = Crowd.new
     @population = Population.new(world, crowd)
     @prefetcher = Prefetcher.new(store)
@@ -19,6 +20,7 @@ class Game
     @net        = 0.0
     @interest   = 0.0
     @heat       = Hash.new(0.0)
+    @heat_at    = {}
     @police     = {}
   end
 
@@ -89,7 +91,7 @@ class Game
 
   private
 
-  attr_reader :scores, :players, :poops, :events, :population, :prefetcher, :heat, :police
+  attr_reader :scores, :positions, :players, :poops, :events, :population, :prefetcher, :heat, :police
 
   def run
     last = clock
@@ -120,6 +122,7 @@ class Game
     respawn_players
     players.values.each { |player| leave(player.client) && player.client.close if now - player.last_seen > 10 }
     scores.flush(now)
+    positions.flush(now)
     @net += dt
     return if @net < NET
     @net = 0.0
@@ -174,7 +177,7 @@ class Game
     client.player = player
     players[player.id] = player
     player.last_seen = now
-    client.send('welcome' => { 'id' => player.id, 'world' => world.name, 'start' => world.start, 'origin' => Limburg::ORIGIN, 'tileSize' => Tile::SIZE, 'tileVersion' => Tile::VERSION, 'kinds' => Npc::KINDS, 'npcs' => Population::CLASSES.transform_values(&:describe), 'score' => scores[player.name], 't' => now.round(2), 'poops' => poops.map(&:to_row) })
+    client.send('welcome' => { 'id' => player.id, 'world' => world.name, 'start' => positions[player.name] || world.start, 'origin' => Limburg::ORIGIN, 'tileSize' => Tile::SIZE, 'tileVersion' => Tile::VERSION, 'kinds' => Npc::KINDS, 'npcs' => Population::CLASSES.transform_values(&:describe), 'score' => scores[player.name], 't' => now.round(2), 'poops' => poops.map(&:to_row) })
   end
 
   def turbo(player)
@@ -191,16 +194,16 @@ class Game
   end
 
   def heat_up(player)
-    heat[player.id] = [heat[player.id] - (now - (@heated || now)) * HEAT_DECAY, 0.0].max + HEAT_PER_KILL
-    @heated = now
+    heat[player.id] = [heat[player.id] - (now - @heat_at.fetch(player.id, now)) * HEAT_DECAY, 0.0].max + HEAT_PER_KILL
+    @heat_at[player.id] = now
     return if police[player.id] || heat[player.id] < WANTED_AT
     dispatch(player)
   end
 
   def dispatch(player)
     car = player.car
-    spot = [Math::PI, Math::PI * 0.75, Math::PI * 1.25, Math::PI / 2, -Math::PI / 2].map { |turn| [car.x + Math.sin(car.heading + turn) * 90, car.z + Math.cos(car.heading + turn) * 90] }
-               .find { |x, z| world.inside?(x, z) && !world.blocked?(x, z) } or return
+    candidates = [90, 60, 130].product((0...8).map { |k| Math::PI + k * Math::PI / 4 }).map { |radius, turn| [car.x + Math.sin(car.heading + turn) * radius, car.z + Math.cos(car.heading + turn) * radius] }
+    spot = candidates.find { |x, z| world.inside?(x, z) && !world.blocked?(x, z) } || [car.x - Math.sin(car.heading) * 25, car.z - Math.cos(car.heading) * 25]
     cop = Politie.new(POLICE_ID + player.id, spot[0], spot[1], car.heading, world, Random.new(player.id), player)
     police[player.id] = cop
     crowd.add(cop)
@@ -214,6 +217,7 @@ class Game
     return if entry && entry[:tile].outside?
     from = [player.car.x, player.car.z]
     player.car.move(x.to_f, z.to_f, heading, speed)
+    positions.update(player.name, x, z, heading) if player.alive?
     return if !player.alive? || Math.hypot(x - from[0], z - from[1]) > 30
     poops.reject! do |poop|
       next false unless poop.near?(player.car.x, player.car.z, 1.4)
