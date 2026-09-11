@@ -11,7 +11,7 @@ const TIPS = [
   'Binnen 5 seconden achteruit en weer vooruit over hem heen: twee halve coins extra.',
   'De labradoodle is onsterfelijk en rent weg. Raak een beagle en je Panda ontploft: al je coins weg.',
   'Elke kill is een coin, Speakerboy is er vijf waard, een drol oprapen een halve.',
-  'Kort op Shift tikken is turbo: vijf seconden vlammen voor vijf coins.',
+  'E is turbo: vijf seconden vlammen en dubbele punten voor vijf coins. Nog eens E tijdens de turbo is nitro.',
   'Drie kills snel achter elkaar en de politie komt. Opgepakt worden kost je de helft van je coins.',
   'In Einighausen lopen alleen kale mannetjes rond.',
   'Druk op T om naar een supermarkt, skatebaan of station te springen.',
@@ -73,7 +73,7 @@ const COLORS = {
   plinth:     new THREE.Color(0x4f4a45),
   gutter:     new THREE.Color(0x50555c),
   road:       new THREE.Color(0x56575b),
-  wear:       new THREE.Color(0x494a4e),
+  wear:       new THREE.Color(0x4f5054),
   sidewalk:   new THREE.Color(0xa9a59c),
   curb:       new THREE.Color(0xc4c1b8),
   dash:       new THREE.Color(0xe8e8e0),
@@ -107,7 +107,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true })
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5))
 renderer.setSize(innerWidth, innerHeight)
 renderer.shadowMap.enabled = true
-renderer.shadowMap.type = THREE.PCFSoftShadowMap
+renderer.shadowMap.type = THREE.PCFShadowMap
 renderer.toneMapping = THREE.NeutralToneMapping
 renderer.toneMappingExposure = 1.15
 document.body.prepend(renderer.domElement)
@@ -116,8 +116,7 @@ const effect = new OutlineEffect(renderer, { defaultThickness: 0.0016, defaultCo
 scene.add(new THREE.HemisphereLight(0xffffff, 0x8fbf70, 0.65))
 const sun = new THREE.DirectionalLight(0xfff4e0, 2.3)
 sun.castShadow = true
-sun.shadow.mapSize.set(4096, 4096)
-sun.shadow.radius = 3
+sun.shadow.mapSize.set(3072, 3072)
 sun.shadow.camera.left = sun.shadow.camera.bottom = -220
 sun.shadow.camera.right = sun.shadow.camera.top = 220
 sun.shadow.camera.near = 1
@@ -183,8 +182,8 @@ function infectable(material) {
   return material
 }
 
-const toon = infectable(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, envMapIntensity: 0.35, side: THREE.DoubleSide }))
-const solid = (color, map) => infectable(new THREE.MeshStandardMaterial({ color, roughness: 0.6, envMapIntensity: 0.5, ...(map && { map }) }))
+const toon = infectable(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }))
+const solid = (color, map) => infectable(new THREE.MeshLambertMaterial({ color, ...(map && { map }) }))
 const carPaint = color => infectable(new THREE.MeshPhysicalMaterial({ color, metalness: 0.35, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.06, envMapIntensity: 1.3 }))
 const carGlass = new THREE.MeshPhysicalMaterial({ color: 0x1c2b3a, metalness: 0.6, roughness: 0.05, envMapIntensity: 1.8 })
 const chrome = new THREE.MeshStandardMaterial({ color: 0xe0e0e0, metalness: 1, roughness: 0.14, envMapIntensity: 1.8 })
@@ -436,7 +435,7 @@ function windowAtlas() {
 }
 TEXTURES.window = windowAtlas()
 
-const textured = map => infectable(new THREE.MeshStandardMaterial({ map, vertexColors: true, roughness: 0.9, envMapIntensity: 0.3, side: THREE.DoubleSide }))
+const textured = map => infectable(new THREE.MeshLambertMaterial({ map, vertexColors: true, side: THREE.DoubleSide }))
 const MATERIALS = { plain: toon, asphalt: textured(TEXTURES.asphalt), paving: textured(TEXTURES.paving), gravel: textured(TEXTURES.gravel), plaster: textured(TEXTURES.plaster), hedge: textured(TEXTURES.foliage), brickRed: textured(TEXTURES.brickRed), brickBrown: textured(TEXTURES.brickBrown), brickYellow: textured(TEXTURES.brickYellow), tiles: textured(TEXTURES.tiles), ground: textured(TEXTURES.grass), window: textured(TEXTURES.window) }
 MATERIALS.window.map.wrapS = MATERIALS.window.map.wrapT = THREE.ClampToEdgeWrapping
 MATERIALS.window.map.repeat.set(1, 1)
@@ -509,11 +508,8 @@ function releaseSigns(tile) {
   signSlots.forEach(slot => slot.holders.delete(tile.key))
 }
 
-MATERIALS.sign = infectable(new THREE.MeshStandardMaterial({ map: signMap, roughness: 0.5, side: THREE.DoubleSide }))
-MATERIALS.asphalt.roughness = 0.72
-MATERIALS.window.roughness = 0.18
-MATERIALS.window.metalness = 0.55
-MATERIALS.window.envMapIntensity = 1.4
+MATERIALS.sign = infectable(new THREE.MeshLambertMaterial({ map: signMap, side: THREE.DoubleSide }))
+MATERIALS.window = infectable(new THREE.MeshStandardMaterial({ map: TEXTURES.window, vertexColors: true, roughness: 0.18, metalness: 0.55, envMapIntensity: 1.4, side: THREE.DoubleSide }))
 MATERIALS.sign.userData.outlineParameters = { visible: false }
 
 function signQuad(sign, cx, cz, ux, uz, nx, nz, width, bottom, height) {
@@ -680,15 +676,17 @@ function stampStep(tile) {
   return () => {
     for (let k = 0; k < 25 && queue.length; k++) {
       const road = queue.shift()
-      if (!road.profile) {
+      if (!road.profile || road.profilePartial) {
         const curve = new THREE.CatmullRomCurve3(road.p.map(([x, z]) => new THREE.Vector3(x, 0, z)), false, 'centripetal')
         const points = curve.getSpacedPoints(Math.max(2, Math.ceil(curve.getLength() / 10)))
-        const heights = points.map(({ x, z }) => smoothHeight(x, z))
+        const heights = points.map(({ x, z }) => tileAt(x, z)?.raw ? smoothHeight(x, z) : null)
         road.profile = points.map(({ x, z }, i) => {
+          if (heights[i] === null) return null
           let total = 0, count = 0
-          for (let d = -3; d <= 3; d++) if (heights[i + d] !== undefined) { total += heights[i + d]; count++ }
+          for (let d = -3; d <= 3; d++) if (heights[i + d] !== undefined && heights[i + d] !== null) { total += heights[i + d]; count++ }
           return [x, z, total / count, heights[i]]
-        })
+        }).filter(Boolean)
+        road.profilePartial = heights.some(h => h === null)
       }
       const reach = road.w / 2 + 7.5
       road.profile.forEach(([x, z, level, height]) => {
@@ -791,7 +789,7 @@ function prepareRoad(road, bigWater) {
   const coarse = road.samples.filter((_, i) => i % 3 === 0 || i === road.samples.length - 1)
   road.asphalt = bufferPieces(coarse, road.w)
   road.walkway = (road.w >= 5 && road.w <= 8) || road.dual ? bufferPieces(coarse, road.w + 3.1) : null
-  const xs = road.samples.map(p => p[0]), zs = road.samples.map(p => p[1]), margin = road.w / 2 + 2
+  const xs = road.samples.map(p => p[0]), zs = road.samples.map(p => p[1]), margin = road.w / 2 + 3
   road.cells = []
   for (let cx = Math.floor((Math.min(...xs) - margin) / SUB); cx <= Math.floor((Math.max(...xs) + margin) / SUB); cx++)
     for (let cz = Math.floor((Math.min(...zs) - margin) / SUB); cz <= Math.floor((Math.max(...zs) + margin) / SUB); cz++) {
@@ -1008,7 +1006,7 @@ function buildRoadLinework(tile, road, groups) {
     strip([], nodes, 3.4, 0.12, COLORS.ballast, groups.plain)
   } else if (road.kind === 'water') {
     const lift = road.level === undefined ? 0.12 : 0
-    pieces.forEach(points => strip(points, [], road.w, lift, COLORS.water, groups.plain))
+    pieces.forEach(points => splitWhere(points, ([x, z]) => onOtherAsphalt(x, z, null, 1)).forEach(open => strip(open, [], road.w, lift, COLORS.water, groups.plain)))
     strip([], nodes, road.w, lift, COLORS.water, groups.plain)
   } else if (road.kind === 'path') {
     pieces.forEach(points => strip(points, [], Math.min(road.w, 1.5), 0.12, COLORS.path, groups.gravel))
@@ -1025,8 +1023,8 @@ function buildRoadLinework(tile, road, groups) {
 }
 
 function roadMarkings(road, points, groups) {
-  if (road.w >= 4) for (const lane of [-1, 1]) for (const wheel of [-1, 1]) band(points, lane * road.w / 4 + wheel * 0.62, 0.115, LIFT.wear, COLORS.wear, groups.plain)
-  if (road.w < 7 && !road.dual) return
+  if (road.w >= 4) for (const lane of [-1, 1]) for (const wheel of [-1, 1]) band(points, lane * road.w / 4 + wheel * 0.62, 0.1, LIFT.wear, COLORS.wear, groups.plain)
+  if (road.w < 8 && !road.dual) return
   splitWhere(points, ([x, z]) => onOtherAsphalt(x, z, road, 2.5)).forEach(marks => {
     if (!road.dual || road.w >= 9) dashes(marks, groups.plain)
     for (const side of [-1, 1]) {
@@ -1500,6 +1498,19 @@ function frontEdge(building) {
   return best
 }
 
+function boxy(points) {
+  let angle = 0, longest = 0
+  points.forEach(([x, z], i) => {
+    const [nx, nz] = points[(i + 1) % points.length]
+    const length = (nx - x) ** 2 + (nz - z) ** 2
+    if (length > longest) { longest = length; angle = Math.atan2(nz - z, nx - x) }
+  })
+  const cos = Math.cos(angle), sin = Math.sin(angle)
+  const xs = points.map(([x, z]) => x * cos + z * sin), zs = points.map(([x, z]) => -x * sin + z * cos)
+  const w = Math.max(...xs) - Math.min(...xs), d = Math.max(...zs) - Math.min(...zs)
+  return Math.max(w, d) < 32 && footprintArea(points) > 0.72 * w * d
+}
+
 function prepareBuilding(building) {
   const heights = building.p.map(([x, z]) => terrainHeight(x, z))
   building.base = Math.max(...heights)
@@ -1508,6 +1519,7 @@ function prepareBuilding(building) {
   building.h = +(building.h + ((seed % 1) - 0.5) * 1.2).toFixed(1)
   if (building.roof === 'hip' && Math.abs(seed) % 5 === 0) building.roof = 'flat'
   else if (building.roof === 'flat' && building.h <= 8 && Math.abs(seed) % 7 === 0) building.roof = 'hip'
+  if (building.roof === 'hip' && !boxy(building.p)) building.roof = 'flat'
   building.bottom = Math.min(...heights) - 0.5
   building.plaster = Math.abs(Math.floor(seed / 3)) % 4 === 0
   building.group = building.plaster ? 'plaster' : ['brickRed', 'brickRed', 'brickBrown', 'brickYellow'][Math.abs(Math.floor(seed / 5)) % 4]
@@ -2075,7 +2087,7 @@ function buildSky() {
 
 const bodyParts = [], brakeLights = [], wheels = []
 let wheelSpin = 0
-let flame = null, shiftDownAt = 0
+let flame = null
 const CLEAN = new THREE.Color(0xefe6cf), FILTHY = new THREE.Color(0x4a3a24)
 
 function dirty(amount) {
@@ -3020,12 +3032,14 @@ buildSky()
 // SAMPLES (drop mp3/wav files in assets/sounds to replace the synthesized sounds):
 
 const samples = new Map()
-const SAMPLE_SETS = { scream: 4, zombie: 3, bark: 2 }
+const SAMPLE_SETS = { scream: 8, zombie: 5, bark: 2 }
+const SAMPLE_OK = {}
 
 function loadSample(name) {
   if (samples.has(name)) return samples.get(name)
   const promise = fetch(`assets/sounds/${name}.mp3`).then(response => response.ok ? response.arrayBuffer() : null)
     .then(data => data && audio ? audio.decodeAudioData(data) : null).then(normalize).catch(() => null)
+    .then(buffer => { if (buffer) (SAMPLE_OK[name.replace(/\d+$/, '')] ||= []).push(name); return buffer })
   samples.set(name, promise)
   return promise
 }
@@ -3038,13 +3052,14 @@ function normalize(buffer) {
   return buffer
 }
 
-async function playSample(name, { level = 1, loop = false, out, from = 0, to = 0 } = {}) {
+async function playSample(name, { level = 1, loop = false, out, from = 0, to = 0, rate = 1 } = {}) {
   if (!audio) return null
   const buffer = await loadSample(name)
   if (!buffer) return null
   const source = audio.createBufferSource(), gain = audio.createGain()
   source.buffer = buffer
   source.loop = loop
+  source.playbackRate.value = rate
   if (to) { source.loopStart = from; source.loopEnd = to }
   gain.gain.value = level
   source.connect(gain).connect(out || sfx || audio.destination)
@@ -3052,7 +3067,7 @@ async function playSample(name, { level = 1, loop = false, out, from = 0, to = 0
   return { source, gain }
 }
 
-const pickSample = set => `${set}${1 + Math.floor(random() * SAMPLE_SETS[set])}`
+const pickSample = set => { const ok = SAMPLE_OK[set]; return ok && ok.length ? ok[Math.floor(random() * ok.length)] : `${set}${1 + Math.floor(random() * SAMPLE_SETS[set])}` }
 let introTrack
 
 // METAL INTRO:
@@ -3279,7 +3294,7 @@ function updateEngine() {
 
 function scream(kind) {
   if (!sfx) return
-  playSample(pickSample(kind === 'zombie' ? 'zombie' : 'scream'), { level: 0.9 }).then(track => { if (!track) synthScream(kind) })
+  playSample(pickSample(kind === 'zombie' ? 'zombie' : 'scream'), { level: 0.65 + random() * 0.45, rate: 0.82 + random() * 0.36 }).then(track => { if (!track) synthScream(kind) })
 }
 
 function synthScream(kind) {
@@ -3640,6 +3655,7 @@ const EVENTS = {
     renderPlayers()
   },
   arrest(player) { if (player === myId) arrested() },
+  attack(player) { if (player === myId) attacked() },
   score(player, value) { if (player === myId) showScore(value) },
   poop(...row) { addPoop(row) },
   unpoop(id, by) {
@@ -3664,6 +3680,13 @@ function renderPlayers() {
 
 const wantedEl = document.getElementById('wanted')
 let wanted = 0, siren = null
+
+function attacked() {
+  state.shake = 2.2
+  streetEl.textContent = 'Gerard slaat op je Panda: -1 coin'
+  thud(0.9)
+  dirty(0.08)
+}
 
 function arrested() {
   state.heldUntil = performance.now() + 2500
@@ -3804,14 +3827,11 @@ addEventListener('keydown', event => {
   if (!bigmap.hidden) return
   if (event.code === 'KeyT' && !/INPUT|TEXTAREA/.test(event.target.tagName)) return toggleTravel()
   if (!travel.hidden) return
-  if (event.code.startsWith('Shift') && !event.repeat) shiftDownAt = performance.now()
+  if (event.code === 'KeyE' && !event.repeat && !/INPUT|TEXTAREA/.test(event.target.tagName)) return startTurbo()
   keys.add(event.code)
   if (event.code.startsWith('Arrow')) event.preventDefault()
 })
-addEventListener('keyup', event => {
-  keys.delete(event.code)
-  if (event.code.startsWith('Shift') && performance.now() - shiftDownAt < 300) startTurbo()
-})
+addEventListener('keyup', event => keys.delete(event.code))
 
 function startTurbo() {
   const now = performance.now(), turbo = now < (state.turboUntil || 0)

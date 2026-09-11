@@ -36,7 +36,25 @@ class DogWalker < HumanoidNpc
       'JAMES, BIJT HEM! BIJT HEM IN ZIJN KANKERBALLEN!'
     ]
   }
+  RAGE, CHARGE, HIT_RADIUS, HIT_COOLDOWN, HIT_COST = 8, 4.0, 2.4, 3, 1
   attr_accessor :dog
+
+  def say(game)
+    super
+    @rage_until = game.now + RAGE if game.nearest_player(x, z, 30)
+  end
+
+  def tick(dt, game)
+    prey = @rage_until && game.now < @rage_until && !dead && game.nearest_player(x, z, 60)
+    return super unless prey
+    @heading = Math.atan2(prey.car.x - x, prey.car.z - z)
+    @speed   = CHARGE
+    move(dt)
+    touch
+    return unless near?(prey.car.x, prey.car.z, HIT_RADIUS) && game.now - (@hit_at || -10) > HIT_COOLDOWN
+    @hit_at = game.now
+    game.attack(prey, self, HIT_COST)
+  end
 
   def decide(game)
     super

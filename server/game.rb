@@ -53,6 +53,12 @@ class Game
     dismiss(cop)
   end
 
+  def attack(player, npc, cost)
+    scores.award(player.name, -[cost, scores[player.name]].min)
+    events << ['attack', player.id, npc.id]
+    events << ['score', player.id, scores[player.name]]
+  end
+
   def dismiss(cop)
     return unless police.delete(cop.target.id)
     crowd.remove(cop)

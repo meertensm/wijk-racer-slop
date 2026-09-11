@@ -17,9 +17,11 @@ MOODS   = {
 }
 EFFECTS = {
   'scream' => { voice: 'nl-NL-MaartenNeural', rate: '-20%', pitch: '+50%', volume: '+70%',
-                lines: ['AAAAAAAAAAAH! KANKER!', 'NEE! NEE! NEEEEEEEE! GODVERDOMME!', 'AAAAAARGH! GODVERDEKANKER!', 'OOOOOOH! MIJN KUTBEEEEEEN!'] },
+                lines: ['AAAAAAAAAAAH! KANKER!', 'NEE! NEE! NEEEEEEEE! GODVERDOMME!', 'AAAAAARGH! GODVERDEKANKER!', 'OOOOOOH! MIJN KUTBEEEEEEN!',
+                        ['WAAAAAAH! NIET DOEN! NIEEEET!', 'nl-NL-FennaNeural', '-10%', '+40%'], ['AAAAIIII! MIJN HEUP! GODVER!', 'nl-NL-FennaNeural', '-25%', '+25%'],
+                        ['HUUUUUUUH! TERINGLIJER!', 'nl-NL-MaartenNeural', '-35%', '+20%'], ['OEHOEHOEHOEEEEE! AU! AU! AU!', 'nl-NL-MaartenNeural', '+10%', '+65%']] },
   'zombie' => { voice: 'nl-NL-MaartenNeural', rate: '-50%', pitch: '-50%', volume: '+50%',
-                lines: ['UUUUUUUUHHHHHH!', 'HERSENEN! HERSENEN! HERSENEN!', 'GRAAAAAAAAUUUUWWWW!'] }
+                lines: ['UUUUUUUUHHHHHH!', 'HERSENEN! HERSENEN! HERSENEN!', 'GRAAAAAAAAUUUUWWWW!', ['BLOEEEEEED! WARM BLOEEEED!', 'nl-NL-FennaNeural', '-60%', '-40%'], ['NNNGGGGHHHH! HONGER!', 'nl-NL-MaartenNeural', '-40%', '-65%']] }
 }
 
 http = Net::HTTP.new("#{region}.tts.speech.microsoft.com", 443)
@@ -50,5 +52,8 @@ Population::CLASSES.each do |kind, klass|
 end
 
 EFFECTS.each do |name, set|
-  set[:lines].each_with_index { |text, index| render.call("#{root}/assets/sounds/#{name}#{index + 1}.mp3", set[:voice], text, rate: set[:rate], pitch: set[:pitch], volume: set[:volume]) }
+  set[:lines].each_with_index do |line, index|
+    text, voice, rate, pitch = Array(line)
+    render.call("#{root}/assets/sounds/#{name}#{index + 1}.mp3", voice || set[:voice], text, rate: rate || set[:rate], pitch: pitch || set[:pitch], volume: set[:volume])
+  end
 end
