@@ -3433,7 +3433,8 @@ function toggleTravel(open = travel.hidden) {
   fetch('places.json', { cache: 'no-store' }).then(response => response.json()).then(places => { farPlaces = places; if (!travel.hidden) renderTravel() }).catch(() => {})
 }
 
-function travelTo(name) {
+async function travelTo(name) {
+  if (!farPlaces.length) farPlaces = await fetch('places.json', { cache: 'no-store' }).then(response => response.json()).catch(() => [])
   const place = [...tilesNear(3).flatMap(tile => tile.data.places), ...farPlaces].find(place => place.name === name)
   if (!place) return
   state.x = place.x
