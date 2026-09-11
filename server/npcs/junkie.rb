@@ -7,22 +7,22 @@ class Junkie < HumanoidNpc
   MOODS   = %i[angry happy]
   LINES = {
     angry: [
-      'HÉ! HEB JE WAT VOOR ME OF NIET, KANKERLIJER!',
-      'GODVERDOMME! IK ZIT TE TRILLEN EN JIJ RIJDT OVER MIJN VOETEN!',
-      'GEEF ME GELD! NU! TYFUSHOND!',
-      'IK ZIE JE WEL, KUTPANDA! IK ZIE ALLES!',
-      'MIJN SPULLEN! JE HEBT MIJN KANKERSPULLEN GEPLET!',
-      'FLIKKER OP, IK WACHT HIER OP IEMAND, TERINGLIJER!',
-      'AAAH! MIJN ARM! MIJN GOEIE ARM, GODVERDOMME!',
-      'IK GA JE AANGEVEN! BIJ IEDEREEN! KANKERZAK!'
+      'Heb je wat voor me of niet, kankerlijer!',
+      'Ik zit te trillen en jij rijdt over mijn voeten, lul!',
+      'Geef me geld! Nu! Tyfushond!',
+      'Ik zie je wel, kutpanda! Ik zie alles!',
+      'Mijn spullen! Je hebt mijn spullen geplet, klootzak!',
+      'Flikker op, ik wacht hier op iemand, teringlijer!',
+      'Mijn arm! Mijn goeie arm, godverdomme!',
+      'Ik geef je aan! Bij iedereen! Kankerzak!'
     ],
     happy: [
-      'Wow, wat een kleuren, man! Je auto glimt helemaal!',
+      'Wauw, wat een kleuren, man! Je auto glimt helemaal!',
       'Heb je een tientje? Nee? Ook goed, ook goed!',
       'Ik voel me fantastisch! Alles klopt vandaag!',
       'Haha, die Panda! Die praat tegen me, man!',
       'Rij maar door hoor, ik vlieg zelf wel!',
-      'Alles is liefde, jonguh! Alles!',
+      'Alles is liefde, jongen! Alles!',
       'Wat een rustige dag, hè? Zo mooi. Zo mooi.',
       'Toeter nog eens! Dat klonk als muziek!'
     ]

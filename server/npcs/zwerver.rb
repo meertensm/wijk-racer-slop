@@ -7,18 +7,18 @@ class Zwerver < HumanoidNpc
   MOODS   = %i[angry happy]
   LINES = {
     angry: [
-      'HÉ! DIT IS MIJN STOEP, KANKERLIJER!',
-      'GODVERDOMME! MIJN BLIKJES! JE RIJDT OVER MIJN BLIKJES!',
-      'FLIKKER OP MET DIE KUTPANDA, IK SLAAP HIER!',
-      'KOM HIER DAN, TYFUSJONG! IK BIJT JE OOR ERAF!',
-      'IK HEB NIKS MEER EN JIJ RIJDT ME OOK NOG KANKERDOOD!',
-      'GODVER! MIJN WINKELWAGEN! MIJN HELE KANKERLEVEN ZAT DAAR IN!',
-      'GA TERUG NAAR SITTARD, KUTKOP!',
-      'AAAH! MIJN RUG! MIJN TERINGRUG!'
+      'Dit is mijn stoep, kankerlijer! Weg hier!',
+      'Mijn blikjes! Je rijdt over mijn blikjes, klootzak!',
+      'Flikker op met die kutpanda, ik slaap hier!',
+      'Kom hier, tyfusjong, dan bijt ik je oor eraf!',
+      'Ik heb niks meer en jij rijdt me ook nog dood!',
+      'Mijn winkelwagen! Mijn hele leven zat daarin, lul!',
+      'Ga terug naar Sittard, kutkop!',
+      'Mijn rug! Mijn rug, godverdomme!'
     ],
     happy: [
       'Hé maat! Heb je een euro voor me? Fijne dag verder!',
-      'Mooi weertje hè! Rij voorzichtig, jonguh!',
+      'Mooi weertje hè! Rij voorzichtig, jongen!',
       'Haha, wat een lekkere Panda! Mag ik een keer mee?',
       'Ik heb vandaag drie euro gevonden! Drie! Wat een dag!',
       'Toeter eens! Ja! Haha, geweldig!',

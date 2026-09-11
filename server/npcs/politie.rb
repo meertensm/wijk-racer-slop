@@ -7,14 +7,14 @@ class Politie < Npc
   GENDERS = %i[male female]
   LINES = {
     angry: [
-      'STOP! POLITIE! AAN DE KANT MET DIE KUTPANDA!',
-      'RIJDEN MAAR, KANKERLIJER! WE KRIJGEN JE TOCH WEL!',
-      'ZET DIE AUTO STIL, TERINGHOND! NU!',
-      'JE BENT GEZOCHT, VUILE KLOOTZAK!',
-      'DIT IS DE POLITIE! HANDEN OP HET STUUR, KUTKOP!',
-      'HEEL LIMBURG ZOEKT JE, HOERENZOON!',
-      'GODVERDOMME, HIJ GAAT ER WEER VANDOOR!',
-      'CENTRALE? VERDACHTE IN EEN PANDA, KANKERSNEL!'
+      'Stop! Politie! Aan de kant met die kutpanda!',
+      'Rijden maar, kankerlijer! We krijgen je toch wel!',
+      'Zet die auto stil, teringhond! Nu!',
+      'Je bent gezocht, vuile klootzak!',
+      'Dit is de politie! Handen op het stuur, kutkop!',
+      'Heel Limburg zoekt je, hoerenzoon!',
+      'Godverdomme, hij gaat er weer vandoor!',
+      'Centrale? Verdachte in een Panda, kankersnel!'
     ]
   }
   CATCH_RADIUS, CATCH_SPEED, CATCH_TIME, GIVE_UP_RADIUS, GIVE_UP_TIME = 3.2, 4.0, 1.2, 450, 12

@@ -89,6 +89,7 @@ const COLORS = {
   rail:       new THREE.Color(0xa0a0a0),
   ballast:    new THREE.Color(0x6b6558),
   embankment: new THREE.Color(0x7c9a5a),
+  bitumen:    new THREE.Color(0x3b3b3e),
   horizon:    new THREE.Color(0xdfeeff),
   zenith:     new THREE.Color(0x5aa9e8)
 }
@@ -767,7 +768,7 @@ function prepareRoad(road, bigWater) {
     road.hs = road.hs.map((h, i) => Math.min(h, known.heights[i] + 9))
   }
   road.ground = loadedHeights(road.p).heights
-  road.elevated = road.hs.some((h, i) => h > road.ground[i] + 0.4)
+  road.elevated = (road.kind === 'road' || road.kind === 'rail') && road.hs.some((h, i) => h > road.ground[i] + 1.0)
   const lifted = (y, ground) => road.kind === 'water' || road.bridge || (road.elevated && y > ground + 0.4)
   road.nodes = road.p.map(([x, z], i) => [x, z, lifted(road.hs[i], road.ground[i]) ? road.hs[i] : road.ground[i], lifted(road.hs[i], road.ground[i])])
   const curve = new THREE.CatmullRomCurve3(road.p.map(([x, z], i) => new THREE.Vector3(x, road.hs[i], z)), false, 'centripetal')
@@ -1009,27 +1010,27 @@ function buildRoadLinework(tile, road, groups) {
     pieces.forEach(points => splitWhere(points, ([x, z]) => onOtherAsphalt(x, z, null, 1)).forEach(open => strip(open, [], road.w, lift, COLORS.water, groups.plain)))
     strip([], nodes, road.w, lift, COLORS.water, groups.plain)
   } else if (road.kind === 'path') {
-    pieces.forEach(points => strip(points, [], Math.min(road.w, 1.5), 0.12, COLORS.path, groups.gravel))
-    strip([], nodes, Math.min(road.w, 1.5), 0.12, COLORS.path, groups.gravel)
+    pieces.forEach(points => splitWhere(points, ([x, z]) => onOtherAsphalt(x, z, null, 0.6)).forEach(open => strip(open, [], Math.min(road.w, 1.5), 0.12, COLORS.path, groups.gravel)))
+    strip([], nodes.filter(([x, z]) => !onOtherAsphalt(x, z, null, 0.6)), Math.min(road.w, 1.5), 0.12, COLORS.path, groups.gravel)
   } else if (road.elevated || road.bridge) {
     pieces.forEach(points => strip(points, [], road.w, 0.22, COLORS.road, groups.asphalt))
     strip([], nodes, road.w, 0.22, COLORS.road, groups.asphalt)
     pieces.forEach(points => {
       roadMarkings(road, points, groups)
-      if (road.bridge) bridge(points, road.w, groups.plain)
+      if (road.bridge) bridge(points, road.w, groups.plain, road, groups.plaster)
       else embankment(points, road.w, groups.ground)
     })
   }
 }
 
 function roadMarkings(road, points, groups) {
-  if (road.w >= 4) for (const lane of [-1, 1]) for (const wheel of [-1, 1]) band(points, lane * road.w / 4 + wheel * 0.62, 0.1, LIFT.wear, COLORS.wear, groups.plain)
   if (road.w < 8 && !road.dual) return
-  splitWhere(points, ([x, z]) => onOtherAsphalt(x, z, road, 2.5)).forEach(marks => {
+  const long = piece => piece.length > 1 && piece.slice(1).reduce((sum, [x, z], i) => sum + Math.hypot(x - piece[i][0], z - piece[i][1]), 0) >= 2
+  splitWhere(points, ([x, z]) => onOtherAsphalt(x, z, road, 2.5)).filter(long).forEach(marks => {
     if (!road.dual || road.w >= 9) dashes(marks, groups.plain)
     for (const side of [-1, 1]) {
       const edge = offsetLine(marks, side * (road.w / 2 - 0.35)).map(([x, y, z], i) => [x, z, y, marks[i][3]])
-      splitWhere(edge, ([x, z]) => onOtherAsphalt(x, z, road, 0.4)).forEach(piece => band(piece, side * 0.01, 0.12, LIFT.paint, COLORS.dash, groups.plain))
+      splitWhere(edge, ([x, z]) => onOtherAsphalt(x, z, road, 0.4)).filter(long).forEach(piece => band(piece, side * 0.01, 0.12, LIFT.paint, COLORS.dash, groups.plain))
     }
   })
 }
@@ -1117,7 +1118,16 @@ function alongGround(points) {
   return dense
 }
 
-function* polygonGeometry(rings, lift, color) {
+function cleanRing(ring) {
+  const out = []
+  ring.forEach(p => { const last = out[out.length - 1]; if (!last || Math.hypot(p[0] - last[0], p[1] - last[1]) > 0.01) out.push(p) })
+  while (out.length > 3 && Math.hypot(out[0][0] - out[out.length - 1][0], out[0][1] - out[out.length - 1][1]) <= 0.01) out.pop()
+  return out
+}
+
+function* polygonGeometry(rings, lift, color, aligned = false) {
+  rings = rings.map(cleanRing).filter(ring => ring.length >= 3)
+  if (!rings.length) return new THREE.BufferGeometry()
   const shape = new THREE.Shape(rings[0].map(([x, z]) => new THREE.Vector2(x, -z)))
   rings.slice(1).forEach(hole => shape.holes.push(new THREE.Path(hole.map(([x, z]) => new THREE.Vector2(x, -z)))))
   const base = new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2)
@@ -1148,6 +1158,16 @@ function* polygonGeometry(rings, lift, color) {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
   geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+  if (aligned) {
+    const uvs = new Float32Array(positions.length / 3 * 2)
+    for (let i = 0; i < positions.length; i += 3) {
+      const x = positions[i], z = positions[i + 2], { segment } = nearestSegment(x, z)
+      if (!segment) { uvs.set([x, z], i / 3 * 2); continue }
+      const length = Math.hypot(segment.b[0] - segment.a[0], segment.b[1] - segment.a[1]) || 1, dx = (segment.b[0] - segment.a[0]) / length, dz = (segment.b[1] - segment.a[1]) / length
+      uvs.set([x * dx + z * dz, -x * dz + z * dx], i / 3 * 2)
+    }
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+  }
   return geometry
 }
 
@@ -1206,7 +1226,7 @@ function placeAsphaltStep(cell, data) {
   const groups = newGroups(), box = cellBox(cell.kx, cell.kz, 0)
   const tasks = [
     ...data.asphalt.map(polygon => function* () { groups.asphalt.push(yield* polygonGeometry(polygon, LIFT.asphalt, COLORS.road)) }),
-    ...data.walkways.map(polygon => function* () { groups.paving.push(yield* polygonGeometry(polygon, LIFT.sidewalk, COLORS.sidewalk)); polygon.forEach(ring => curb(ring, LIFT.sidewalk, 0, groups.plain)) }),
+    ...data.walkways.map(polygon => function* () { groups.paving.push(yield* polygonGeometry(polygon, LIFT.sidewalk, COLORS.sidewalk, true)); polygon.forEach(ring => curb(ring, LIFT.sidewalk, 0, groups.plain)) }),
     ...cell.roads.map(road => function* () { piecesIn(road.samples, box).forEach(points => roadMarkings(road, points, groups)) })
   ].map(task => task())
   return () => {
@@ -1243,32 +1263,44 @@ async function awaitAsphalt(reach) {
   await pumpFor(['asphalt'], 9)
 }
 
-function bridge(points, width, parts) {
+function neighbourRoad(x, z, road, reach) {
+  const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL)
+  for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+    for (const segment of segmentGrid.get(`${cx + dx},${cz + dz}`) || []) {
+      if (segment.road !== road && pointToSegment(x, z, segment.a, segment.b).distance < reach) return true
+    }
+  }
+  return false
+}
+
+function bridge(points, width, parts, road, concrete) {
   const sides = edges(points, width + 1.2), inner = edges(points, width + 0.3)
-  const concrete = COLORS.concrete, dark = COLORS.concrete.clone().multiplyScalar(0.72), steel = COLORS.rail
+  const dark = COLORS.concrete.clone().multiplyScalar(0.72), steel = COLORS.rail
   const shift = (line, dy) => line.map(([x, y, z]) => [x, y + dy, z])
+  const open = [0, 1].map(side => { const [x, , z] = sides[Math.floor(sides.length / 2)][side]; return neighbourRoad(x, z, road, width / 2 + 5) })
   for (const side of [0, 1]) {
     const top = sides.map(pair => pair[side]), lip = inner.map(pair => pair[side])
-    parts.push(paint(skirt(shift(top, 0.05), shift(top, -1.1)), concrete))
-    parts.push(paint(skirt(shift(top, 0.5), shift(top, 0.05)), concrete))
-    parts.push(paint(skirt(shift(lip, 0.5), shift(lip, 0.06)), concrete))
-    parts.push(paint(skirt(shift(top, 0.5), shift(lip, 0.5)), dark))
-    parts.push(paint(skirt(shift(top, 1.18), shift(top, 1.1)), steel))
-    parts.push(paint(skirt(shift(top, 0.86), shift(top, 0.82)), steel))
+    concrete.push(paint(skirt(shift(top, 0.05), shift(top, -1.1)), COLORS.concrete))
+    concrete.push(paint(skirt(shift(top, 0.32), shift(top, 0.05)), COLORS.concrete))
+    concrete.push(paint(skirt(shift(lip, 0.32), shift(lip, 0.06)), COLORS.concrete))
+    concrete.push(paint(skirt(shift(top, 0.32), shift(lip, 0.32)), dark))
+    if (open[side]) continue
+    parts.push(paint(skirt(shift(top, 1.12), shift(top, 1.06)), steel))
+    parts.push(paint(skirt(shift(top, 0.74), shift(top, 0.7)), steel))
     let along = 2
     top.forEach(([x, y, z], i) => {
       if (i) along += Math.hypot(x - top[i - 1][0], z - top[i - 1][2])
       if (along < 2) return
       along = 0
-      parts.push(paint(new THREE.BoxGeometry(0.07, 0.7, 0.07).translate(x, y + 0.85, z), steel))
+      parts.push(paint(new THREE.BoxGeometry(0.06, 0.8, 0.06).translate(x, y + 0.72, z), steel))
     })
   }
-  parts.push(paint(skirt(shift(sides.map(pair => pair[0]), -1.1), shift(sides.map(pair => pair[1]), -1.1)), dark))
+  concrete.push(paint(skirt(shift(sides.map(pair => pair[0]), -1.1), shift(sides.map(pair => pair[1]), -1.1)), dark))
   const heading = i => Math.atan2(points[Math.min(i + 1, points.length - 1)][0] - points[Math.max(i - 1, 0)][0], points[Math.min(i + 1, points.length - 1)][1] - points[Math.max(i - 1, 0)][1])
-  const placed = (geometry, angle, x, y, z) => parts.push(paint(geometry.rotateY(angle).translate(x, y, z), concrete))
-  let travelled = 12, lit = 0
+  const placed = (geometry, angle, x, y, z) => concrete.push(paint(geometry.rotateY(angle).translate(x, y, z), COLORS.concrete))
+  let travelled = 12, lit = 14
   points.forEach(([x, z, y], i) => {
-    if (i) travelled += Math.hypot(x - points[i - 1][0], z - points[i - 1][1])
+    if (i) { const step = Math.hypot(x - points[i - 1][0], z - points[i - 1][1]); travelled += step; lit += step }
     const angle = heading(i), nx = Math.cos(angle), nz = -Math.sin(angle), ground = terrainHeight(x, z)
     if ((i === 0 || i === points.length - 1) && y - 1.1 - ground > 0.6) {
       const height = y - 1.1 - ground + 0.6
@@ -1278,19 +1310,15 @@ function bridge(points, width, parts) {
       travelled = 0
       const depth = y - 1.1 - ground + 1.5
       placed(new THREE.BoxGeometry(width + 0.8, 0.9, 1.6), angle, x, y - 1.55, z)
-      for (const side of [-1, 1]) {
-        const off = side * (width / 2 - 0.5)
-        placed(new THREE.BoxGeometry(1.0, depth, 1.3), angle, x + nx * off, y - 1.1 - depth / 2, z + nz * off)
-      }
+      for (const side of [-1, 1]) placed(new THREE.BoxGeometry(1.0, depth, 1.3), angle, x + nx * side * (width / 2 - 0.5), y - 1.1 - depth / 2, z + nz * side * (width / 2 - 0.5))
     }
-    if (i) lit += Math.hypot(x - points[i - 1][0], z - points[i - 1][1])
-    if (lit >= 24 || i === 0) {
+    const lampSide = open[1] ? -1 : 1
+    if (lit >= 30 && !open[lampSide === 1 ? 1 : 0] && !road.dual) {
       lit = 0
-      const off = width / 2 + 0.45
-      const px = x + nx * off, pz = z + nz * off
+      const off = lampSide * (width / 2 + 0.45), px = x + nx * off, pz = z + nz * off
       parts.push(paint(new THREE.BoxGeometry(0.12, 5, 0.12).translate(px, y + 3, pz), steel))
-      parts.push(paint(new THREE.BoxGeometry(1.4, 0.08, 0.08).rotateY(angle).translate(px - nx * 0.6, y + 5.4, pz - nz * 0.6), steel))
-      parts.push(paint(new THREE.BoxGeometry(0.55, 0.16, 0.3).rotateY(angle).translate(px - nx * 1.3, y + 5.32, pz - nz * 1.3), new THREE.Color(0xf4f1dc)))
+      parts.push(paint(new THREE.BoxGeometry(1.4, 0.08, 0.08).rotateY(angle).translate(px - nx * lampSide * 0.6, y + 5.4, pz - nz * lampSide * 0.6), steel))
+      parts.push(paint(new THREE.BoxGeometry(0.55, 0.16, 0.3).rotateY(angle).translate(px - nx * lampSide * 1.3, y + 5.32, pz - nz * lampSide * 1.3), new THREE.Color(0xf4f1dc)))
     }
   })
 }
@@ -1516,7 +1544,7 @@ function prepareBuilding(building) {
   building.base = Math.max(...heights)
   const seed = building.p[0][0] * 13 + building.p[0][1] * 7
   building.c = Math.abs(Math.floor(seed)) % COLORS.walls.length
-  building.h = +(building.h + ((seed % 1) - 0.5) * 1.2).toFixed(1)
+  building.h = +Math.max(3.2, building.h + ((seed % 1) - 0.5) * 1.2).toFixed(1)
   if (building.roof === 'hip' && Math.abs(seed) % 5 === 0) building.roof = 'flat'
   else if (building.roof === 'flat' && building.h <= 8 && Math.abs(seed) % 7 === 0) building.roof = 'hip'
   if (building.roof === 'hip' && !boxy(building.p)) building.roof = 'flat'
@@ -1531,6 +1559,7 @@ function buildBuilding(building, groups) {
   const walls = new THREE.ExtrudeGeometry(shape, { depth: building.base + building.h - building.bottom, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, building.bottom, 0)
   groups[building.group].push(paint(walls, building.wall))
   if (building.roof === 'hip') hipRoof(building, groups)
+  else groups.plain.push(paint(new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2).translate(0, building.base + building.h + 0.03, 0), COLORS.bitumen))
   facadeDetails(building, groups, false)
 }
 
@@ -2963,8 +2992,7 @@ function drawMinimap(dt) {
   map.clearRect(0, 0, size, size)
   map.save()
   map.translate(size / 2, size / 2)
-  map.rotate(-(mapHeading + Math.PI))
-    map.scale(scale, scale)
+  map.scale(scale, scale)
   map.translate(-state.x, -state.z)
   map.lineCap = map.lineJoin = 'round'
 
@@ -3007,6 +3035,8 @@ function drawMinimap(dt) {
 
   map.save()
   map.translate(size / 2, size / 2)
+  map.save()
+  map.rotate(mapHeading + Math.PI)
   map.fillStyle = '#e53935'
   map.beginPath()
   map.moveTo(0, -12)
@@ -3014,8 +3044,8 @@ function drawMinimap(dt) {
   map.lineTo(-8, 10)
   map.closePath()
   map.fill()
-  map.rotate(-(mapHeading + Math.PI))
-    map.fillStyle = '#fff'
+  map.restore()
+  map.fillStyle = '#fff'
   map.font = 'bold 22px system-ui'
   map.textAlign = 'center'
   map.fillText('N', 0, -size / 2 + 34)
@@ -3886,16 +3916,26 @@ function unstick() {
   streetEl.textContent = 'Losgetrokken'
 }
 
+function carDiscs(x, z, heading) {
+  return [-0.95, 0.95].map(offset => [x + Math.sin(heading) * offset, z + Math.cos(heading) * offset])
+}
+
 function bumpCars() {
+  const mine = carDiscs(state.x, state.z, state.heading)
   others.forEach(other => {
-    const dx = state.x - other.group.position.x, dz = state.z - other.group.position.z
-    const distance = Math.hypot(dx, dz)
-    if (distance > 3.2 || distance === 0) return
-    const push = (3.2 - distance) / 2 + 0.05
-    state.x += dx / distance * push
-    state.z += dz / distance * push
+    if (Math.hypot(state.x - other.group.position.x, state.z - other.group.position.z) > 6) return
+    const theirs = carDiscs(other.group.position.x, other.group.position.z, other.group.rotation.y)
+    let hit = null
+    for (const a of mine) for (const b of theirs) {
+      const distance = Math.hypot(a[0] - b[0], a[1] - b[1])
+      if (distance < 2.1 && distance > 0 && (!hit || distance < hit.distance)) hit = { distance, dx: (a[0] - b[0]) / distance, dz: (a[1] - b[1]) / distance }
+    }
+    if (!hit) return
+    const push = (2.1 - hit.distance) / 2 + 0.05
+    state.x += hit.dx * push
+    state.z += hit.dz * push
     if (Math.abs(state.speed) > 2) { thud(Math.min(1, Math.abs(state.speed) / 15)); state.shake = 0.6 }
-    state.speed = -state.speed * 0.4 + (other.speed || 0) * 0.3
+    state.speed = state.speed * 0.5 + (other.speed || 0) * 0.3
   })
 }
 

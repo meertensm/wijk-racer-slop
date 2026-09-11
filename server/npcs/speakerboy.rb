@@ -6,14 +6,14 @@ class Speakerboy < HumanoidNpc
   PACE   = 4.5..6.0
   LINES = {
     angry: [
-      'SPEAKERBOY!',
-      'SPEAKERBOOOOOOY!',
-      'SPEAKERBOY! SPEAKERBOY! SPEAKERBOY!',
-      'SPEAKERBOY, JONGUH! HARDER, KANKERHARD!',
-      'IK BEN SPEAKERBOY, KUTLUL!',
-      'SPEAKERBOY IN DE PLAATS! MAAK RUIMTE, TERINGLIJERS!',
-      'HARDER! HARDER! SPEAKERBOY, GODVERDOMME!',
-      'SPEAKERBOY! OH OH OH OH! KANKER!'
+      'Speakerboy!',
+      'Speakerboy! Speakerboy! Speakerboy!',
+      'Harder! Harder, kankerhard!',
+      'Ik ben Speakerboy, kutlul!',
+      'Speakerboy in de plaats! Maak ruimte, teringlijers!',
+      'Speakerboy! Oh oh oh oh! Kanker!',
+      'Wie zet mijn muziek zachter? Ik sla je kapot!',
+      'Bassen, jongen! Bassen tot je oren bloeden!'
     ]
   }
 

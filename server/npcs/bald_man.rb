@@ -3,19 +3,19 @@ class BaldMan < HumanoidNpc
   REWARD = 1
   LINES = {
     angry: [
-      'GODVERDOMME!',
-      'GODVERDEGODVERDEGODVERDEKANKER!',
-      'GODSAMMEKRAKEN! KIJK UIT, KANKERLIJER!',
-      'GODVER! MIJN HEUP! MIJN TYFUSHEUP!',
-      'GODVERDOMME NOG AAN TOE, KUTLUL!',
-      'GODVER! GODVER! GODVER! KANKER!',
-      'GODVERDOMME, WAT EEN ACHTERLIJKE KANKERSUKKEL!',
-      'GODVERDOMME! DAT IS TOCH NIET NORMAAL MEER, HOERENZOON!',
-      'GODVERDOMME, MIJN KALE KOP! MIJN KANKERKOP!',
-      'GODVERDOMSE KUTPANDA! IK SLA JE TERINGAUTO IN PUIN!',
-      'GODVERDOMME! IK VERMOORD JE, KANKERHOND!',
-      'GODVER! KOM HIER, DAN TREK IK JE KUTKOP ERAF!',
-      'JEETJE WAT EEN STANK HIER ZEG!'
+      'Godverdomme!',
+      'Godverdomme nog aan toe, kutlul!',
+      'Kijk uit, kankerlijer!',
+      'Godver! Mijn heup! Mijn heup!',
+      'Godverdomme, wat een achterlijke sukkel!',
+      'Dat is toch niet normaal meer, hoerenzoon!',
+      'Godverdomme, mijn kale kop!',
+      'Godverdomse kutpanda! Ik sla je auto in puin!',
+      'Godverdomme! Ik vermoord je, kankerhond!',
+      'Kom hier, dan trek ik je kop eraf!',
+      'Godver, godver, godver! Kanker!',
+      'Wat een stank hier, godverdomme!',
+      'Ik heb je gezien, klootzak! Ik heb je gezien!'
     ]
   }
 
@@ -30,18 +30,18 @@ class BaldFlag < BaldMan
   TTS_VOICE = 'nl-BE-ArnaudNeural'
   LINES = {
     angry: [
-      'GODVERDOMME! WA DOEDE GIJ NOU, KAOIE KANKERHOND!',
-      'KÈK UIT, GODVERDOMME! KAOIE TERINGLIJER!',
-      'GE ZIJT NIE GOE WIJS, GODVERDOMSE KUTLUL!',
-      'GODVERDOMME! MÈN VLAG! GE HEBT MÈN VLAG KAPOTGEREDEN, KANKERZAK!',
-      'HEDDE GIJ WEL GEKEKEN, GODVERDOMSE TYFUSSUKKEL!',
-      'GODVERDOMME! DA KEN TOCH NIE, KUTJONG!',
-      'HOUDOE EN BEDANKT, GODVERDOMSE KLOOTZAK!',
-      'GODVER! GE RIJDT OVER MÈN TENEN, KANKERLUL!',
-      'GODVERDOMME, GIJ KAOIE KUTPANDA!',
-      'WA IS DA NOU WIR, GODVERDOMME! IK SLA JE KANKERPLAT!',
-      'GODVER! IK ZEG \'T TEGEN ONS MOEDER, EN DIE MAAKT JE KANKERAF!',
-      'KOM HIER, JONGUH! DAN KRÈGDE GIJ EEN LEL OP JE KUTBAKKES!'
+      'Godverdomme! Wat doede gij nou, kaoie kankerhond!',
+      'Kijk uit, godverdomme! Kaoie teringlijer!',
+      'Ge zijt nie goed wijs, godverdomse kutlul!',
+      'Godverdomme! Mijn vlag! Ge hebt mijn vlag kapotgereden, kankerzak!',
+      'Hedde gij wel gekeken, godverdomse tyfussukkel!',
+      'Godverdomme! Da ken toch nie, kutjong!',
+      'Houdoe en bedankt, godverdomse klootzak!',
+      'Godver! Ge rijdt over mijn tenen, kankerlul!',
+      'Godverdomme, gij kaoie kutpanda!',
+      'Wat is da nou weer, godverdomme! Ik sla je plat!',
+      'Ik zeg het tegen ons moeder, en die maakt je af!',
+      'Kom hier, jongen! Dan krijgde gij een lel op je bakkes!'
     ]
   }
 end

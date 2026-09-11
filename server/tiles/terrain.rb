@@ -14,7 +14,7 @@ class Terrain
   def filled
     return @filled if @filled
     rows = grid.map(&:dup)
-    25.times do
+    400.times do
       break unless rows.flatten.include?(nil)
       rows = rows.each_with_index.map do |row, r|
         row.each_with_index.map do |value, c|
