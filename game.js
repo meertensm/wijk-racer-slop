@@ -1159,13 +1159,12 @@ function* polygonGeometry(rings, lift, color, aligned = false) {
   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
   geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
   if (aligned) {
+    const ring = rings[0], cx = ring.reduce((sum, p) => sum + p[0], 0) / ring.length, cz = ring.reduce((sum, p) => sum + p[1], 0) / ring.length
+    const { segment } = nearestSegment(cx, cz, 3)
+    const length = segment ? Math.hypot(segment.b[0] - segment.a[0], segment.b[1] - segment.a[1]) || 1 : 1
+    const dx = segment ? (segment.b[0] - segment.a[0]) / length : 1, dz = segment ? (segment.b[1] - segment.a[1]) / length : 0
     const uvs = new Float32Array(positions.length / 3 * 2)
-    for (let i = 0; i < positions.length; i += 3) {
-      const x = positions[i], z = positions[i + 2], { segment } = nearestSegment(x, z)
-      if (!segment) { uvs.set([x, z], i / 3 * 2); continue }
-      const length = Math.hypot(segment.b[0] - segment.a[0], segment.b[1] - segment.a[1]) || 1, dx = (segment.b[0] - segment.a[0]) / length, dz = (segment.b[1] - segment.a[1]) / length
-      uvs.set([x * dx + z * dz, -x * dz + z * dx], i / 3 * 2)
-    }
+    for (let i = 0; i < positions.length; i += 3) uvs.set([positions[i] * dx + positions[i + 2] * dz, -positions[i] * dz + positions[i + 2] * dx], i / 3 * 2)
     geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
   }
   return geometry
