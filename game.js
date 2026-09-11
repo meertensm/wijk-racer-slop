@@ -3308,9 +3308,11 @@ function updateMultiplayer(dt, now) {
 const travel = document.getElementById('travel')
 const travelList = document.getElementById('travel-list')
 
+let farPlaces = []
+
 function renderTravel() {
-  const towns = new Map()
-  tilesNear(3).flatMap(tile => tile.data.places).forEach(place => {
+  const towns = new Map(), seen = new Set()
+  ;[...tilesNear(3).flatMap(tile => tile.data.places), ...farPlaces].filter(place => !seen.has(place.name) && seen.add(place.name)).forEach(place => {
     const town = place.town || 'Overig'
     if (!towns.has(town)) towns.set(town, [])
     towns.get(town).push(place)
@@ -3324,11 +3326,13 @@ function renderTravel() {
 function toggleTravel(open = travel.hidden) {
   travel.hidden = !open
   keys.clear()
-  if (open) renderTravel()
+  if (!open) return
+  renderTravel()
+  fetch('places.json', { cache: 'no-store' }).then(response => response.json()).then(places => { farPlaces = places; if (!travel.hidden) renderTravel() }).catch(() => {})
 }
 
 function travelTo(name) {
-  const place = tilesNear(3).flatMap(tile => tile.data.places).find(place => place.name === name)
+  const place = [...tilesNear(3).flatMap(tile => tile.data.places), ...farPlaces].find(place => place.name === name)
   if (!place) return
     const { segment, distance, t } = nearestSegment(place.x, place.z, 6)
     if (segment && distance < 250) {

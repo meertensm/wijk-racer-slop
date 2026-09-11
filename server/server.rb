@@ -27,7 +27,7 @@ class Server
     request = HttpRequest.read(socket) or return socket.close
     if request.websocket?
       Client.new(@counter += 1, socket, request, game.inbox).run
-    elsif tiles && request.path.start_with?('/tiles/')
+    elsif tiles && (request.path.start_with?('/tiles/') || request.path == '/places.json')
       tiles.respond(socket, request)
     else
       static.respond(socket, request)

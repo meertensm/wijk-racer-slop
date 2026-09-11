@@ -20,14 +20,21 @@ tx, tz     = Tile.key(*projection.project(*nominatim.geocode(address)))
 keys       = (-1..1).flat_map { |dx| (-1..1).map { |dz| [tx + dx, tz + dz] } }
 keys.each { |key| store.request(*key, 0) }
 keys.each { |key| store.wait(*key, 120) }
-start      = Start.new(store, projection, nominatim).locate(address)
-zones      = slicer.zones.each_with_index.map { |zone, i| Zone.new(i, zone['name'], zone['kinds'], zone['p']) }
-spots      = slicer.world.fetch('spots', []).each_with_index.map { |s, i| Spot.new(i, s['kind'], s['name'], s['x'], s['z'], s['heading']) }
+locator    = Start.new(store, projection, nominatim)
+start      = locator.locate(address)
+zones      = Limburg::ZONES.each_with_index.map { |(name, kinds), i| Zone.new(i, name, kinds, nominatim.polygon("#{name}, Limburg, Nederland").map { |lat, lon| projection.project(lat, lon) }) }
+spots      = Limburg::SPOTS.each_with_index.map do |(spot_address, kind), i|
+  key = Tile.key(*projection.project(*nominatim.geocode(spot_address)))
+  store.request(*key, 0)
+  store.wait(*key, 120)
+  place = locator.spot(spot_address, kind)
+  Spot.new(i, kind, spot_address, place['x'], place['z'], place['heading'])
+end
 world      = World.new('limburg', projection, Zones.new(zones), spots)
 world.start = start
 game       = Game.new(world, store, Scores.new('data/scores.json'))
 game.warm(start['x'], start['z'])
 puts "#{address} -> #{start['x']}, #{start['z']}; #{game.crowd.size} npcs in #{world.tiles.size} tiles"
-info       = -> { { 'name' => 'limburg', 'origin' => Limburg::ORIGIN, 'tileSize' => Tile::SIZE, 'tileVersion' => Tile::VERSION, 'step' => Tile::STEP, 'start' => start, 'zones' => slicer.zones } }
+info       = -> { { 'name' => 'limburg', 'origin' => Limburg::ORIGIN, 'tileSize' => Tile::SIZE, 'tileVersion' => Tile::VERSION, 'step' => Tile::STEP, 'start' => start, 'zones' => zones.map { |zone| { 'name' => zone.name, 'kinds' => zone.kinds, 'p' => zone.polygon } } } }
 tiles      = TileEndpoint.new(store, Static.new(root), info)
 Server.new(Integer(ARGV[0] || 8765), game, root, tiles).run

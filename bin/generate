@@ -1,200 +1,23 @@
 #!/usr/bin/env ruby
-require 'json'
-require 'net/http'
+$stdout.sync = true
+root = File.expand_path('..', __dir__)
+Dir.chdir(root)
+%w[geometry limburg tiles/projection tiles/tile tiles/tile_store tiles/nominatim tiles/boundary tiles/overpass tiles/ahn tiles/terrain tiles/scatter tiles/signs tiles/landmarks tiles/tile_builder tiles/tile_generator tiles/world_slicer tiles/tile_source].each { |file| require "#{root}/server/#{file}" }
 
-name, south, west, north, east, start_street = ARGV
-abort 'usage: bin/generate NAME SOUTH WEST NORTH EAST [START_STREET]' unless east
-
-bbox = [south, west, north, east].map(&:to_f)
-lat0 = (bbox[0] + bbox[2]) / 2
-lng0 = (bbox[1] + bbox[3]) / 2
-
-HEIGHTS = { 'house' => 6, 'detached' => 6, 'semidetached_house' => 6, 'terrace' => 6, 'residential' => 7,
-            'apartments' => 12, 'retail' => 5, 'commercial' => 6, 'industrial' => 8, 'warehouse' => 8,
-            'shed' => 2.5, 'garage' => 2.8, 'garages' => 2.8, 'church' => 15, 'school' => 5, 'static_caravan' => 3 }
-ROOFED  = %w[house detached semidetached_house terrace residential yes farm]
-WIDTHS  = { 'motorway' => 12, 'motorway_link' => 6, 'trunk' => 10, 'trunk_link' => 6, 'primary' => 9, 'primary_link' => 6,
-            'secondary' => 8, 'secondary_link' => 6, 'tertiary' => 7, 'residential' => 6, 'unclassified' => 6,
-            'living_street' => 5, 'pedestrian' => 5, 'service' => 4, 'track' => 3, 'cycleway' => 2.5, 'footway' => 2, 'path' => 1.5 }
-PATHS   = %w[track cycleway footway path]
-WATER   = { 'river' => 100, 'canal' => 50, 'stream' => 2.5, 'ditch' => 1.5, 'drain' => 1.5 }
-
-def project(pt, lat0, lng0)
-  [((pt['lon'] - lng0) * 111_320 * Math.cos(lat0 * Math::PI / 180)).round(1),
-   (-(pt['lat'] - lat0) * 110_540).round(1)]
+address, radius = ARGV
+abort 'usage: bin/generate "ADRES" STRAAL_KM' unless radius
+projection = Projection.new(*Limburg::ORIGIN)
+nominatim  = Nominatim.new('data/geo')
+generator  = TileGenerator.new(projection, Boundary.new(projection, nominatim.relation(Limburg::RELATION)), Overpass.new, Ahn.new)
+slicer     = File.exist?('worlds/sittard-geleen.json') ? WorldSlicer.new('worlds/sittard-geleen.json') : nil
+store      = TileStore.new("data/tiles/#{Tile::VERSION}", TileSource.new(slicer, generator))
+tx, tz     = Tile.key(*projection.project(*nominatim.geocode(address)))
+reach      = (radius.to_f / Tile::SIZE * 1000).ceil
+keys       = (-reach..reach).flat_map { |dx| (-reach..reach).map { |dz| [tx + dx, tz + dz] } }.sort_by { |kx, kz| Math.hypot(kx - tx, kz - tz) }
+keys.each { |key| store.request(*key, 1) }
+keys.each_with_index do |key, i|
+  next if store.cached?(*key)
+  store.wait(*key, 600)
+  puts "#{i + 1}/#{keys.length} #{store.cached?(*key) ? 'ok' : 'failed'} #{key.join(',')}"
 end
-
-def inside?(poly, x, z)
-  hit = false
-  poly.each_with_index do |(ax, az), i|
-    bx, bz = poly[i - 1]
-    hit = !hit if (az > z) != (bz > z) && x < (bx - ax) * (z - az) / (bz - az) + ax
-  end
-  hit
-end
-
-def scatter(poly, id, density)
-  xs, zs = poly.transpose
-  area   = (xs.max - xs.min) * (zs.max - zs.min)
-  random = Random.new(id)
-  Array.new([(area / density).to_i, 400].min) { [random.rand(xs.min..xs.max), random.rand(zs.min..zs.max)] }
-       .select { |x, z| inside?(poly, x, z) }
-       .map { |x, z| [x.round(1), z.round(1)] }
-end
-
-area = bbox.join(',')
-query = <<~QL
-  [out:json][timeout:300];
-  (
-    way["building"](#{area});
-    way["highway"](#{area});
-    way["railway"="rail"](#{area});
-        node["natural"="tree"](#{area});
-        node["shop"]["name"](#{area});
-        node["amenity"]["name"](#{area});
-    way["natural"~"^(water|wood|scrub)$"](#{area});
-        way["landuse"~"^(grass|forest|farmland|meadow|orchard|allotments|industrial|commercial|retail)$"](#{area});
-        way["amenity"="parking"](#{area});
-    way["leisure"~"^(park|pitch|playground|garden)$"](#{area});
-    way["waterway"~"^(river|canal|stream|ditch|drain)$"](#{area});
-  );
-  out geom;
-QL
-
-warn "Fetching #{name} from Overpass..."
-elements = nil
-6.times do |attempt|
-  %w[https://overpass-api.de/api/interpreter https://overpass.kumi.systems/api/interpreter].each do |server|
-    response = Net::HTTP.post(URI(server), URI.encode_www_form(data: query), 'Content-Type' => 'application/x-www-form-urlencoded', 'User-Agent' => 'wijk-racer')
-    if response.code == '200'
-      elements = JSON.parse(response.body.force_encoding('UTF-8'))['elements']
-      break
-    end
-    warn "#{server} answered #{response.code}"
-  end
-  break if elements
-  warn "Waiting 45 s before attempt #{attempt + 2}"
-  sleep 45
-end
-abort 'Overpass unavailable' unless elements.is_a?(Array)
-
-buildings, roads, areas, trees, pois = [], [], [], [], []
-
-elements.each do |element|
-  tags = element['tags'] || {}
-
-  if element['type'] == 'node'
-    if tags['natural'] == 'tree'
-      trees << project(element, lat0, lng0)
-    else
-      pois << [*project(element, lat0, lng0), tags['brand'] || tags['name']]
-    end
-    next
-  end
-
-  points = element['geometry'].map { |pt| project(pt, lat0, lng0) }
-  closed = points.first == points.last
-  points.pop if closed
-  points = points.chunk_while { |a, b| a == b }.map(&:first)
-  next if points.size < 2
-
-  if tags['building'] && points.size >= 3
-    type   = tags['building']
-    levels = tags['building:levels']&.to_f
-    height = tags['height']&.to_f || (levels ? levels * 3 : HEIGHTS.fetch(type, 6))
-    buildings << { p: points, h: height.round(1), c: element['id'] % 6,
-                   roof: ROOFED.include?(type) && height <= 9 ? 'hip' : 'flat',
-                   sign: (tags['brand'] || tags['name'])&.slice(0, 24) }.compact
-  elsif tags['highway'] && WIDTHS[tags['highway']]
-    roads << { p: points, w: WIDTHS[tags['highway']], kind: PATHS.include?(tags['highway']) ? 'path' : 'road',
-               name: tags['name'], bridge: (true if tags['bridge'] && tags['bridge'] != 'no') }.compact
-  elsif tags['railway'] == 'rail'
-    roads << { p: points, w: 3, kind: 'rail', name: tags['name'], bridge: (true if tags['bridge'] && tags['bridge'] != 'no') }.compact
-  elsif tags['waterway']
-    roads << { p: points, w: tags['width']&.to_f || WATER[tags['waterway']], kind: 'water', name: tags['name'] }.compact
-  elsif closed && points.size >= 3
-    kind = if tags['natural'] == 'water' then 'water'
-           elsif tags['natural'] == 'wood' || tags['landuse'] == 'forest' then 'forest'
-           elsif %w[farmland orchard allotments].include?(tags['landuse']) then 'field'
-           elsif tags['amenity'] == 'parking' then 'parking'
-           elsif %w[industrial commercial retail].include?(tags['landuse']) then 'lot'
-           else 'grass'
-           end
-    areas << { p: points, kind: kind }
-    trees.concat scatter(points, element['id'], 150) if kind == 'forest'
-    trees.concat scatter(points, element['id'], 1200) if kind == 'grass'
-  end
-end
-
-grid = Hash.new { |h, k| h[k] = [] }
-buildings.each do |b|
-  xs, zs = b[:p].transpose
-  b[:centroid] = [xs.sum / xs.size, zs.sum / zs.size]
-  grid[[(b[:centroid][0] / 50).floor, (b[:centroid][1] / 50).floor]] << b
-end
-pois.each do |x, z, name|
-  next unless name
-  nearby = (-1..1).flat_map { |dx| (-1..1).flat_map { |dz| grid[[(x / 50).floor + dx, (z / 50).floor + dz]] } }
-  building = nearby.find { |b| inside?(b[:p], x, z) } || nearby.min_by { |b| Math.hypot(b[:centroid][0] - x, b[:centroid][1] - z) }
-  building[:sign] ||= name.slice(0, 24) if building && Math.hypot(building[:centroid][0] - x, building[:centroid][1] - z) < 40
-end
-buildings.each { |b| b.delete(:centroid) }
-warn "#{buildings.count { |b| b[:sign] }} buildings with signs"
-
-start = { x: 0, z: 0, heading: 0 }
-if start_street
-  cross, along = start_street.split(/ x /i, 2)
-  along ||= cross
-  streets = roads.select { |r| r[:name] == along }
-  abort "Street #{along} not found" if streets.empty?
-
-  if cross == along
-    street = streets.max_by { |r| r[:p].size }
-    a, b   = street[:p][street[:p].size / 2 - 1, 2]
-    a      = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
-  else
-    node   = roads.select { |r| r[:name] == cross }.flat_map { |r| r[:p] } & streets.flat_map { |r| r[:p] }
-    abort "No intersection of #{cross} and #{along}" if node.empty?
-    street = streets.find { |r| r[:p].include?(node.first) }
-    index  = street[:p].index(node.first)
-    a, b   = node.first, street[:p][index + 1] || street[:p][index - 1]
-  end
-  start = { x: a[0].round(1), z: a[1].round(1), heading: Math.atan2(b[0] - a[0], b[1] - a[1]).round(3) }
-end
-
-corners = [[bbox[0], bbox[1]], [bbox[2], bbox[3]]].map { |lat, lon| project({ 'lat' => lat, 'lon' => lon }, lat0, lng0) }
-bounds  = [corners[0][0], corners[1][1], corners[1][0], corners[0][1]]
-
-warn 'Fetching elevation from AHN...'
-wcs = "https://service.pdok.nl/rws/ahn/wcs/v1_0?SERVICE=WCS&VERSION=2.0.1&REQUEST=GetCoverage&COVERAGEID=dtm_05m&FORMAT=image/tiff" \
-      "&SUBSETTINGCRS=http://www.opengis.net/def/crs/EPSG/0/4326&OUTPUTCRS=http://www.opengis.net/def/crs/EPSG/0/4326" \
-      "&SUBSET=Lat(#{bbox[0]},#{bbox[2]})&SUBSET=Long(#{bbox[1]},#{bbox[3]})&SCALEFACTOR=0.05"
-tiff = Net::HTTP.get_response(URI(wcs))
-abort "AHN: #{tiff.code} #{tiff.body[0, 200]}" unless tiff.code == '200'
-File.binwrite('/tmp/ahn.tif', tiff.body)
-system('vips', 'csvsave', '/tmp/ahn.tif', '/tmp/ahn.csv', '--separator', ',') || abort('vips failed')
-grid = File.readlines('/tmp/ahn.csv').map { |line| line.split(',').map { |v| v = v.to_f; v.abs < 1000 ? v : nil } }
-rows, cols = grid.size, grid.first.size
-
-while grid.flatten.include?(nil)
-  grid = grid.each_with_index.map do |row, r|
-    row.each_with_index.map do |value, c|
-      next value if value
-      neighbours = [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]].filter_map { |nr, nc| grid.dig(nr, nc) if nr.between?(0, rows - 1) && nc.between?(0, cols - 1) }
-      neighbours.empty? ? nil : neighbours.sum / neighbours.size
-    end
-  end
-end
-
-heights = grid.flatten
-lowest  = heights.min
-terrain = { x0: bounds[0], z0: bounds[1], sx: ((bounds[2] - bounds[0]) / cols).round(3), sz: ((bounds[3] - bounds[1]) / rows).round(3),
-            cols: cols, rows: rows, heights: heights.map { |h| (h - lowest).round(1) } }
-
-world = { name: name, center: [lat0, lng0], bounds: bounds, start: start, terrain: terrain,
-          buildings: buildings, roads: roads, areas: areas, trees: trees }
-
-previous = File.exist?("worlds/#{name}.json") ? JSON.parse(File.read("worlds/#{name}.json", encoding: 'UTF-8')) : {}
-%w[zones spots places towns].each { |key| world[key.to_sym] = previous[key] if previous[key] }
-File.write("worlds/#{name}.json", JSON.generate(world))
-warn "#{buildings.size} buildings, #{roads.size} roads, #{areas.size} areas, #{trees.size} trees, #{heights.size} heights (#{lowest}-#{heights.max} m) -> worlds/#{name}.json"
+puts "#{keys.count { |key| store.cached?(*key) }}/#{keys.length} tegels in de cache"

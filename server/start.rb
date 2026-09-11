@@ -8,7 +8,18 @@ class Start
   def locate(address)
     x, z = projection.project(*nominatim.geocode(address))
     tile = store.tile(*Tile.key(x, z)) or raise "start tile for #{address} is not cached"
-    snap(tile, x, z)
+    snap(tile, x, z).except('width')
+  end
+
+  def spot(address, kind)
+    x, z = projection.project(*nominatim.geocode(address))
+    tile = store.tile(*Tile.key(x, z)) or raise "spot tile for #{address} is not cached"
+    road = snap(tile, x, z)
+    dx, dz = x - road['x'], z - road['z']
+    length = Math.hypot(dx, dz)
+    offset = (road['width'] || 6) / 2.0 + 2.5
+    length.zero? ? { 'kind' => kind, 'name' => address, 'x' => x, 'z' => z, 'heading' => 0.0 } :
+      { 'kind' => kind, 'name' => address, 'x' => (road['x'] + dx / length * offset).round(1), 'z' => (road['z'] + dz / length * offset).round(1), 'heading' => Math.atan2(-dx, -dz).round(3) }
   end
 
   private
@@ -22,10 +33,10 @@ class Start
         t = fraction(x, z, a, b)
         px, pz = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
         distance = Math.hypot(px - x, pz - z)
-        best = { 'x' => px.round(1), 'z' => pz.round(1), 'heading' => Math.atan2(b[0] - a[0], b[1] - a[1]).round(3), distance: distance } if best.nil? || distance < best[:distance]
+        best = { 'x' => px.round(1), 'z' => pz.round(1), 'heading' => Math.atan2(b[0] - a[0], b[1] - a[1]).round(3), 'width' => road['w'], distance: distance } if best.nil? || distance < best[:distance]
       end
     end
-    best ? best.except(:distance) : { 'x' => x, 'z' => z, 'heading' => 0.0 }
+    best ? best.except(:distance, 'width').merge('width' => best['width']) : { 'x' => x, 'z' => z, 'heading' => 0.0 }
   end
 
   def fraction(x, z, (ax, az), (bx, bz))

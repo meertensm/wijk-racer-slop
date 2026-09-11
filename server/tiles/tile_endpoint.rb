@@ -11,6 +11,7 @@ class TileEndpoint
     case request.path
     when '/tiles/world.json' then static.json(socket, '200 OK', world_info.call)
     when '/tiles/status'     then static.json(socket, '200 OK', status(request.query['x'].to_f, request.query['z'].to_f))
+    when '/places.json'      then static.json(socket, '200 OK', places)
     when %r{\A/tiles/#{Tile::VERSION}/(-?\d+)_(-?\d+)\.json\z} then tile(socket, Regexp.last_match(1).to_i, Regexp.last_match(2).to_i)
     else static.head(socket, '404 Not Found')
     end
@@ -30,6 +31,14 @@ class TileEndpoint
       static.json(socket, '503 Service Unavailable', { 'failed' => true }, 'Retry-After' => '30')
     else
       static.json(socket, '202 Accepted', { 'pending' => true }, 'Retry-After' => '2')
+    end
+  end
+
+  def places
+    Dir.glob(File.join(store.dir, '*.json')).flat_map do |file|
+      JSON.parse(File.read(file, encoding: 'UTF-8')).fetch('places', [])
+    rescue JSON::ParserError
+      []
     end
   end
 
