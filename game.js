@@ -717,8 +717,9 @@ function prepareRoad(road, bigWater) {
   } else if (road.bridge) {
     const [mx, mz] = road.p[Math.floor(road.p.length / 2)]
     const waterLevel = Math.max(-Infinity, ...bigWater.filter(water => polylineDistance(mx, mz, water.p) < water.w).map(water => water.level + 7))
-    const deck = Math.max(road.hs[0], road.hs[road.hs.length - 1])
-    road.hs = road.p.map(() => Math.max(deck, waterLevel))
+    const along = road.p.map((p, i) => i ? Math.hypot(p[0] - road.p[i - 1][0], p[1] - road.p[i - 1][1]) : 0).map((d, i, all) => all.slice(0, i + 1).reduce((a, b) => a + b, 0))
+    const total = along[along.length - 1] || 1, h0 = road.hs[0], h1 = road.hs[road.hs.length - 1]
+    road.hs = road.p.map((p, i) => Math.max(h0 + (h1 - h0) * along[i] / total, waterLevel))
     road.p.forEach((p, i) => elevatedAt.set(key(p), Math.max(elevatedAt.get(key(p)) || 0, road.hs[i])))
   } else {
     road.p.forEach((p, i) => { if (elevatedAt.has(key(p))) road.hs[i] = Math.max(road.hs[i], elevatedAt.get(key(p))) })
@@ -748,7 +749,7 @@ function prepareRoad(road, bigWater) {
   if (road.elevated || road.bridge) return
   const coarse = road.samples.filter((_, i) => i % 3 === 0 || i === road.samples.length - 1)
   road.asphalt = bufferPieces(coarse, road.w)
-  road.walkway = road.w >= 5 && road.w <= 8 && !road.dual ? bufferPieces(coarse, road.w + 3.1) : null
+  road.walkway = (road.w >= 5 && road.w <= 8) || road.dual ? bufferPieces(coarse, road.w + 3.1) : null
   const xs = road.samples.map(p => p[0]), zs = road.samples.map(p => p[1]), margin = road.w / 2 + 2
   road.cells = []
   for (let cx = Math.floor((Math.min(...xs) - margin) / SUB); cx <= Math.floor((Math.max(...xs) + margin) / SUB); cx++)
@@ -987,7 +988,10 @@ function roadMarkings(road, points, groups) {
   if (road.w < 7 && !road.dual) return
   splitWhere(points, ([x, z]) => onOtherAsphalt(x, z, road, 2.5)).forEach(marks => {
     if (!road.dual || road.w >= 9) dashes(marks, groups.plain)
-    for (const side of [-1, 1]) band(marks, side * (road.w / 2 - 0.35), 0.12, LIFT.paint, COLORS.dash, groups.plain)
+    for (const side of [-1, 1]) {
+      const edge = offsetLine(marks, side * (road.w / 2 - 0.35)).map(([x, y, z], i) => [x, z, y, marks[i][3]])
+      splitWhere(edge, ([x, z]) => onOtherAsphalt(x, z, road, 0.4)).forEach(piece => band(piece, side * 0.01, 0.12, LIFT.paint, COLORS.dash, groups.plain))
+    }
   })
 }
 
