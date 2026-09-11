@@ -661,6 +661,17 @@ function stampTile(tile) {
   tile.heights = tile.smooth.map((h, i) => weight[i] ? h + (sum[i] / weight[i] - h) * Math.min(1, weight[i]) : h)
 }
 
+function adoptEdges(tile) {
+  const g = tile.grid, n = g.cols
+  const edges = { '1,0': i => [i * n + n - 1, i * n], '-1,0': i => [i * n, i * n + n - 1], '0,1': i => [(n - 1) * n + i, i], '0,-1': i => [i, (n - 1) * n + i] }
+  Object.entries(edges).forEach(([offset, pair]) => {
+    const [dx, dz] = offset.split(',').map(Number)
+    const other = tiles.get(`${tile.tx + dx},${tile.tz + dz}`)
+    if (!other || !other.heights) return
+    for (let i = 0; i < n; i++) { const [mine, theirs] = pair(i); tile.heights[mine] = other.heights[theirs] }
+  })
+}
+
 function rasterTile(tile) {
   const g = tile.grid
   tile.kinds = new Uint8Array(g.cols * g.rows)
@@ -1527,6 +1538,7 @@ function receiveTile(tile, data) {
   if (data.outside || !data.terrain) { tile.status = 'empty'; return }
   tile.grid = { x0: data.terrain.x0, z0: data.terrain.z0, step: data.terrain.step, cols: data.terrain.cols, rows: data.terrain.rows }
   tile.raw = Float32Array.from(data.terrain.heights)
+  tile.dataAt = performance.now()
   tile.data.roads.forEach(source => {
     let road = roadsById.get(source.id)
     if (!road) { road = { ...source, owners: new Set() }; roadsById.set(source.id, road) }
@@ -1571,7 +1583,7 @@ function schedule(kind, tile, order, step) {
 
 function planTile(tile) {
   const distance = tileDistance(tile)
-  if (tile.status === 'data' && neighbourTiles(tile).every(present)) schedule('terrain', tile, 0, finalizeStep(tile))
+  if (tile.status === 'data' && (neighbourTiles(tile).every(present) || performance.now() - tile.dataAt > 4000)) schedule('terrain', tile, 0, finalizeStep(tile))
   if (tile.status !== 'ready') return
   if (!tile.built.prepare) return schedule('prepare', tile, 1, prepareStep(tile))
   if (distance <= REACH.ground && !tile.built.ground) schedule('ground', tile, 2, () => { buildGround(tile); tile.built.ground = true; return true })
@@ -1582,7 +1594,7 @@ function planTile(tile) {
 }
 
 function finalizeStep(tile) {
-  const steps = [() => smoothTile(tile), () => digTile(tile), () => stampTile(tile), () => { rasterTile(tile); tile.status = 'ready' }]
+  const steps = [() => smoothTile(tile), () => digTile(tile), () => stampTile(tile), () => { adoptEdges(tile); rasterTile(tile); tile.status = 'ready' }]
   return () => { steps.shift()(); return !steps.length }
 }
 
@@ -1658,10 +1670,9 @@ function pump(budget, filter) {
 function streamTiles() {
   const cx = Math.floor(state.x / TILE), cz = Math.floor(state.z / TILE)
   const ahead = Math.abs(state.speed) > 5 ? [Math.round(Math.sin(state.heading)), Math.round(Math.cos(state.heading))] : [0, 0]
-  for (let dx = -REACH.fetch; dx <= REACH.fetch; dx++) for (let dz = -REACH.fetch; dz <= REACH.fetch; dz++) {
-    const key = `${cx + dx},${cz + dz}`
-    if (!tiles.has(key)) fetchTile(cx + dx, cz + dz)
-  }
+  const wanted = []
+  for (let dx = -REACH.fetch; dx <= REACH.fetch; dx++) for (let dz = -REACH.fetch; dz <= REACH.fetch; dz++) if (!tiles.has(`${cx + dx},${cz + dz}`)) wanted.push([dx * dx + dz * dz, cx + dx, cz + dz])
+  wanted.sort((a, b) => a[0] - b[0]).forEach(([, tx, tz]) => fetchTile(tx, tz))
   if (ahead[0] || ahead[1]) for (let side = -1; side <= 1; side++) {
     const tx = cx + ahead[0] * (REACH.fetch + 1) + (ahead[0] ? 0 : side), tz = cz + ahead[1] * (REACH.fetch + 1) + (ahead[1] ? 0 : side)
     if (!tiles.has(`${tx},${tz}`)) fetchTile(tx, tz)
