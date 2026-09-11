@@ -1,5 +1,7 @@
+require 'uri'
+
 class HttpRequest
-  attr_reader :method, :path, :headers
+  attr_reader :method, :path, :query, :headers
 
   def self.read(socket)
     line = socket.gets or return
@@ -9,12 +11,14 @@ class HttpRequest
       name, value = header.split(':', 2)
       headers[name.strip.downcase] = value.to_s.strip if value
     end
-    new(method, target.to_s.split('?').first, headers)
+    path, query = target.to_s.split('?', 2)
+    new(method, path, query, headers)
   end
 
-  def initialize(method, path, headers)
+  def initialize(method, path, query, headers)
     @method  = method
     @path    = path
+    @query   = URI.decode_www_form(query.to_s).to_h
     @headers = headers
   end
 

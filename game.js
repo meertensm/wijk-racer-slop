@@ -3,7 +3,6 @@ import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 
 
-const WORLD = new URLSearchParams(location.search).get('world') || 'rooseveltstraat'
 
 // LOADING SCREEN:
 
@@ -43,9 +42,9 @@ function nextSlide() {
   document.getElementById('player-name').value = localStorage.getItem('playerName') || `Panda-${Math.floor(Math.random() * 900 + 100)}`
 const slideTimer = setInterval(nextSlide, 4000)
 let progress = 0
-const PHASES = { fetch: 3, terrain: 12, stamp: 2, prepare: 3, index: 1, roads: 8, buildings: 30, merge: 10, ground: 20, trees: 3, details: 3, server: 2 }
+const PHASES = { server: 2, fetch: 10, terrain: 10, ground: 8, roads: 8, buildings: 25, trees: 3, asphalt: 8, details: 3 }
 const total = Object.values(PHASES).reduce((a, b) => a + b, 0)
-const LABELS = { fetch: 'Kaart ophalen', terrain: 'Terrein boetseren', stamp: 'Wegen aanleggen', prepare: 'Bruggen bouwen', index: 'Straatnamen leren', roads: 'Asfalt gieten', buildings: 'Huizen metselen', merge: 'Wijken samenvoegen', ground: 'Gras zaaien', trees: 'Bomen planten', details: 'Kozijnen schilderen', server: 'Verbinden met server' }
+const LABELS = { server: 'Verbinden met server', fetch: 'Tegels ophalen', terrain: 'Terrein boetseren', ground: 'Gras zaaien', roads: 'Wegen aanleggen', buildings: 'Huizen metselen', trees: 'Bomen planten', asphalt: 'Asfalt gieten', details: 'Kozijnen schilderen' }
 
 async function phase(name, fn) {
   loadingPhase.textContent = LABELS[name] + '…'
@@ -57,8 +56,6 @@ async function phase(name, fn) {
   console.info(`${name}: ${Math.round(performance.now() - started)} ms`)
 }
 
-let world
-await phase('fetch', async () => { world = await fetch(`worlds/${WORLD}.json`, { cache: 'no-store' }).then(response => response.json()) })
 
 const COLORS = {
   walls:      [0x9c5a45, 0x6e4636, 0xc9b48a, 0xe8e4da, 0xb8b4ac, 0xa8705a, 0x7a3b2e, 0xd9cdb8, 0x5b4b45, 0xc2a27a, 0xf1ece0, 0x8d6a52].map(hex => new THREE.Color(hex)),
@@ -95,7 +92,6 @@ const CELL = 40
 const CAR = { length: 3.4, width: 1.5 }
 const PANDA = { topSpeed: 48, reverseSpeed: 5, acceleration: 7.5, braking: 11, wheelbase: 2.16, steeringLock: 0.7, grip: 15 }
 const GRADE = 0.06
-const T = world.terrain
 
 const scene = new THREE.Scene()
 scene.background = COLORS.horizon
@@ -425,47 +421,66 @@ const BRANDS = [['hornbach', '#f58220'], ['jumbo', '#f9c400', '#000'], ['albert 
   ['bruna', '#e2001a'], ['mediamarkt', '#df0000'], ['media markt', '#df0000'], ['ikea', '#0058a3'], ['decathlon', '#0082c3'],
   ['burger king', '#d62300'], ['domino', '#006491'], ['subway', '#009b48'], ['rabobank', '#ff6600'], ['ing', '#ff6200'], ['abn', '#009286'],
   ['kwantum', '#e2001a'], ['leen bakker', '#e30613'], ['expert', '#f39200'], ['intertoys', '#e2001a'], ['big bazar', '#e30613'], ['wibra', '#d50032']]
-const SIGN = { width: 512, height: 64, columns: 8 }
+const SIGN = { width: 512, height: 64, columns: 8, rows: 64 }
 const brandOf = sign => BRANDS.find(([name]) => new RegExp(`(^|[^a-z])${name}([^a-z]|$)`).test(sign.toLowerCase()))
+const signCanvas = document.createElement('canvas')
+signCanvas.width = SIGN.width * SIGN.columns
+signCanvas.height = SIGN.height * SIGN.rows
+const signCtx = signCanvas.getContext('2d')
+const signMap = new THREE.CanvasTexture(signCanvas)
+signMap.colorSpace = THREE.SRGBColorSpace
+signMap.anisotropy = renderer.capabilities.getMaxAnisotropy()
+const signSlots = new Map()
+const freeSignSlots = Array.from({ length: SIGN.columns * SIGN.rows }, (_, i) => i).reverse()
 
-function signAtlas(signs) {
-  const rows = Math.max(1, Math.ceil(signs.length / SIGN.columns))
-  const canvas = document.createElement('canvas')
-  canvas.width = SIGN.width * SIGN.columns
-  canvas.height = SIGN.height * rows
-  const ctx = canvas.getContext('2d')
-  signs.forEach((sign, i) => {
-    const x = (i % SIGN.columns) * SIGN.width, y = Math.floor(i / SIGN.columns) * SIGN.height
-    const brand = brandOf(sign)
-    const text = brand && UPPER.includes(brand[0]) ? sign.toUpperCase() : sign
-    ctx.fillStyle = brand ? brand[1] : '#1f3a5f'
-    ctx.fillRect(x, y, SIGN.width, SIGN.height)
-    ctx.fillStyle = brand && brand[2] ? brand[2] : '#fff'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-      let size = 48
-      ctx.font = `900 ${size}px system-ui, sans-serif`
-      while (ctx.measureText(text).width > SIGN.width - 30 && size > 14) ctx.font = `900 ${size -= 2}px system-ui, sans-serif`
-      ctx.fillText(text, x + SIGN.width / 2, y + SIGN.height / 2 + 2)
-  })
-  const map = new THREE.CanvasTexture(canvas)
-  map.colorSpace = THREE.SRGBColorSpace
-  map.anisotropy = renderer.capabilities.getMaxAnisotropy()
-  return { map, rows }
+function drawSign(index, sign) {
+  const ctx = signCtx, x = (index % SIGN.columns) * SIGN.width, y = Math.floor(index / SIGN.columns) * SIGN.height
+  const brand = brandOf(sign)
+  const text = brand && UPPER.includes(brand[0]) ? sign.toUpperCase() : sign
+  ctx.fillStyle = brand ? brand[1] : '#1f3a5f'
+  ctx.fillRect(x, y, SIGN.width, SIGN.height)
+  ctx.fillStyle = brand && brand[2] ? brand[2] : '#fff'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  let size = 48
+  ctx.font = `900 ${size}px system-ui, sans-serif`
+  while (ctx.measureText(text).width > SIGN.width - 30 && size > 14) ctx.font = `900 ${size -= 2}px system-ui, sans-serif`
+  ctx.fillText(text, x + SIGN.width / 2, y + SIGN.height / 2 + 2)
 }
 
-const SIGNS = [...new Set(world.buildings.map(building => building.sign).filter(Boolean))].sort((a, b) => (brandOf(b) ? 1 : 0) - (brandOf(a) ? 1 : 0)).slice(0, 512)
-const signs = signAtlas(SIGNS)
-MATERIALS.sign = infectable(new THREE.MeshToonMaterial({ map: signs.map, gradientMap: gradient, side: THREE.DoubleSide }))
+function allocateSign(sign, holder) {
+  let slot = signSlots.get(sign)
+  if (!slot) {
+    let index = freeSignSlots.pop()
+    if (index === undefined) {
+      const victim = [...signSlots.entries()].find(([, other]) => !other.holders.size)
+      if (!victim) return null
+      signSlots.delete(victim[0])
+      index = victim[1].index
+    }
+    slot = { index, holders: new Set() }
+    signSlots.set(sign, slot)
+    drawSign(index, sign)
+    signMap.needsUpdate = true
+  }
+  slot.holders.add(holder)
+  return slot.index
+}
+
+function releaseSigns(tile) {
+  signSlots.forEach(slot => slot.holders.delete(tile.key))
+}
+
+MATERIALS.sign = infectable(new THREE.MeshToonMaterial({ map: signMap, gradientMap: gradient, side: THREE.DoubleSide }))
 MATERIALS.sign.userData.outlineParameters = { visible: false }
 
 function signQuad(sign, cx, cz, ux, uz, nx, nz, width, bottom, height) {
-  const index = SIGNS.indexOf(sign)
-  if (index < 0) return null
-  const column = index % SIGN.columns, row = Math.floor(index / SIGN.columns)
+  const slot = signSlots.get(sign)
+  if (!slot) return null
+  const column = slot.index % SIGN.columns, row = Math.floor(slot.index / SIGN.columns)
   const u0 = column / SIGN.columns, u1 = (column + 1) / SIGN.columns
   if (ux * nz - uz * nx < 0) { ux = -ux; uz = -uz }
-  const v1 = 1 - row / signs.rows, v0 = 1 - (row + 1) / signs.rows
+  const v1 = 1 - row / SIGN.rows, v0 = 1 - (row + 1) / SIGN.rows
   const ox = nx * 0.1, oz = nz * 0.1, half = width / 2
   const x0 = cx - ux * half + ox, z0 = cz - uz * half + oz, x1 = cx + ux * half + ox, z1 = cz + uz * half + oz
   const top = bottom + height
@@ -488,38 +503,64 @@ function uvWorld(geometry) {
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
 
-function smoothTerrain() {
-  const source = T.heights.slice()
-  const at = (c, r) => source[clamp(r, 0, T.rows - 1) * T.cols + clamp(c, 0, T.cols - 1)]
-  for (let r = 0; r < T.rows; r++) for (let c = 0; c < T.cols; c++) {
-    let sum = 0
-    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) sum += at(c + dc, r + dr)
-    T.heights[r * T.cols + c] = sum / 9
-  }
-}
 
 const cubic = (p0, p1, p2, p3, t) => p1 + 0.5 * t * (p2 - p0 + t * (2 * p0 - 5 * p1 + 4 * p2 - p3 + t * (3 * (p1 - p2) + p3 - p0)))
 
-function terrainHeight(x, z) {
-  const gx = clamp((x - T.x0) / T.sx, 0, T.cols - 1.001), gz = clamp((z - T.z0) / T.sz, 0, T.rows - 1.001)
+let TILE = 1000, TILE_VERSION = 1, ORIGIN = [50.99, 5.825], START = { x: 0, z: 0, heading: 0 }, ZONES = [], lastHeight = 40
+const tiles = new Map()
+const roadsById = new Map()
+const tileKeyOf = (x, z) => `${Math.floor(x / TILE)},${Math.floor(z / TILE)}`
+const tileAt = (x, z) => tiles.get(tileKeyOf(x, z))
+const KINDS_BY_INDEX = ['ground', 'grass', 'forest', 'field', 'water', 'parking', 'lot']
+
+function gridAt(tile, field, x, z) {
+  const g = tile.grid
+  const gx = clamp((x - g.x0) / g.step, 0, g.cols - 1.001), gz = clamp((z - g.z0) / g.step, 0, g.rows - 1.001)
   const i = Math.floor(gx), j = Math.floor(gz), fx = gx - i, fz = gz - j
-  const h = (c, r) => T.heights[r * T.cols + c]
+  const h = (c, r) => field[r * g.cols + c]
   return (h(i, j) * (1 - fx) + h(i + 1, j) * fx) * (1 - fz) + (h(i, j + 1) * (1 - fx) + h(i + 1, j + 1) * fx) * fz
 }
 
-function rasterize(polygon, raster, value, keepExisting = false) {
+function terrainHeight(x, z) {
+  const tile = tileAt(x, z)
+  if (!tile || !tile.raw) return lastHeight
+  return lastHeight = gridAt(tile, tile.heights || tile.smooth || tile.raw, x, z)
+}
+
+function smoothHeight(x, z) {
+  const tile = tileAt(x, z)
+  return tile && tile.raw ? gridAt(tile, tile.smooth || tile.raw, x, z) : lastHeight
+}
+
+function cellIndex(tile, x, z) {
+  const g = tile.grid
+  return clamp(Math.round((z - g.z0) / g.step), 0, g.rows - 1) * g.cols + clamp(Math.round((x - g.x0) / g.step), 0, g.cols - 1)
+}
+
+function kindAt(x, z) {
+  const tile = tileAt(x, z)
+  return tile && tile.kinds ? KINDS_BY_INDEX[tile.kinds[cellIndex(tile, x, z)]] : 'ground'
+}
+
+function wasteAt(x, z) {
+  const tile = tileAt(x, z)
+  return !!(tile && tile.waste && tile.waste[cellIndex(tile, x, z)])
+}
+
+function rasterize(tile, polygon, raster, value) {
+  const g = tile.grid
   const zs = polygon.map(p => p[1])
-  const r0 = clamp(Math.ceil((Math.min(...zs) - T.z0) / T.sz), 0, T.rows - 1), r1 = clamp(Math.floor((Math.max(...zs) - T.z0) / T.sz), 0, T.rows - 1)
+  const r0 = clamp(Math.ceil((Math.min(...zs) - g.z0) / g.step), 0, g.rows - 1), r1 = clamp(Math.floor((Math.max(...zs) - g.z0) / g.step), 0, g.rows - 1)
   for (let r = r0; r <= r1; r++) {
-    const z = T.z0 + r * T.sz, crossings = []
+    const z = g.z0 + r * g.step, crossings = []
     for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
       const [ax, az] = polygon[i], [bx, bz] = polygon[j]
       if ((az > z) !== (bz > z)) crossings.push(ax + (z - az) / (bz - az) * (bx - ax))
     }
     crossings.sort((a, b) => a - b)
     for (let k = 0; k + 1 < crossings.length; k += 2) {
-      const c0 = clamp(Math.ceil((crossings[k] - T.x0) / T.sx), 0, T.cols - 1), c1 = clamp(Math.floor((crossings[k + 1] - T.x0) / T.sx), 0, T.cols - 1)
-      for (let c = c0; c <= c1; c++) if (!keepExisting || !raster[r * T.cols + c]) raster[r * T.cols + c] = value
+      const c0 = clamp(Math.ceil((crossings[k] - g.x0) / g.step), 0, g.cols - 1), c1 = clamp(Math.floor((crossings[k + 1] - g.x0) / g.step), 0, g.cols - 1)
+      for (let c = c0; c <= c1; c++) raster[r * g.cols + c] = value
     }
   }
 }
@@ -536,102 +577,165 @@ function polylineDistance(x, z, points) {
   return best
 }
 
-function digWater() {
-  world.roads.filter(road => road.kind === 'water' && road.w >= 10).forEach(road => {
-    const samples = road.p.map(([x, z]) => terrainHeight(x, z)).sort((a, b) => a - b)
-    road.level = samples[Math.floor(samples.length / 2)]
-    const reach = road.w / 2 + T.sx * 0.6
+function neighbourTiles(tile) {
+  const list = []
+  for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) if (dx || dz) list.push(tiles.get(`${tile.tx + dx},${tile.tz + dz}`))
+  return list
+}
+
+function roadsAround(tile) {
+  const seen = new Set(), list = []
+  ;[tile, ...neighbourTiles(tile)].forEach(other => other && other.roads && other.roads.forEach(road => { if (!seen.has(road.id)) { seen.add(road.id); list.push(road) } }))
+  return list
+}
+
+function rawAt(tile, c, r) {
+  const g = tile.grid
+  const dx = c < 0 ? -1 : c >= g.cols ? 1 : 0, dz = r < 0 ? -1 : r >= g.rows ? 1 : 0
+  if (dx || dz) {
+    const other = tiles.get(`${tile.tx + dx},${tile.tz + dz}`)
+    if (other && other.raw) return other.raw[(r - dz * (g.rows - 1)) * g.cols + (c - dx * (g.cols - 1))]
+    c = clamp(c, 0, g.cols - 1)
+    r = clamp(r, 0, g.rows - 1)
+  }
+  return tile.raw[r * g.cols + c]
+}
+
+function smoothTile(tile) {
+  const g = tile.grid, out = new Float32Array(g.cols * g.rows)
+  for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) {
+    let sum = 0
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) sum += rawAt(tile, c + dc, r + dr)
+    out[r * g.cols + c] = sum / 9
+  }
+  tile.smooth = out
+}
+
+function digTile(tile) {
+  const g = tile.grid
+  roadsAround(tile).filter(road => road.kind === 'water' && road.w >= 10).forEach(road => {
+    if (road.level === undefined) {
+      const samples = road.p.map(([x, z]) => smoothHeight(x, z)).sort((a, b) => a - b)
+      road.level = samples[Math.floor(samples.length / 2)]
+    }
+    const reach = road.w / 2 + g.step * 0.6
     for (let i = 1; i < road.p.length; i++) {
       const a = road.p[i - 1], b = road.p[i]
-      const c0 = clamp(Math.floor((Math.min(a[0], b[0]) - reach - T.x0) / T.sx), 0, T.cols - 1), c1 = clamp(Math.ceil((Math.max(a[0], b[0]) + reach - T.x0) / T.sx), 0, T.cols - 1)
-      const r0 = clamp(Math.floor((Math.min(a[1], b[1]) - reach - T.z0) / T.sz), 0, T.rows - 1), r1 = clamp(Math.ceil((Math.max(a[1], b[1]) + reach - T.z0) / T.sz), 0, T.rows - 1)
+      const c0 = clamp(Math.floor((Math.min(a[0], b[0]) - reach - g.x0) / g.step), 0, g.cols - 1), c1 = clamp(Math.ceil((Math.max(a[0], b[0]) + reach - g.x0) / g.step), 0, g.cols - 1)
+      const r0 = clamp(Math.floor((Math.min(a[1], b[1]) - reach - g.z0) / g.step), 0, g.rows - 1), r1 = clamp(Math.ceil((Math.max(a[1], b[1]) + reach - g.z0) / g.step), 0, g.rows - 1)
       for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
-        if (pointToSegment(T.x0 + c * T.sx, T.z0 + r * T.sz, a, b).distance < reach) T.heights[r * T.cols + c] = Math.min(T.heights[r * T.cols + c], road.level - 3)
+        if (pointToSegment(g.x0 + c * g.step, g.z0 + r * g.step, a, b).distance < reach) tile.smooth[r * g.cols + c] = Math.min(tile.smooth[r * g.cols + c], road.level - 3)
       }
     }
   })
 }
 
-function stampRoads() {
-  const sum = new Float32Array(T.heights.length), weight = new Float32Array(T.heights.length)
-  world.roads.filter(road => road.kind === 'road' && !road.bridge).forEach(road => {
-    const curve = new THREE.CatmullRomCurve3(road.p.map(([x, z]) => new THREE.Vector3(x, 0, z)), false, 'centripetal')
-    const points = curve.getSpacedPoints(Math.max(2, Math.ceil(curve.getLength() / 10)))
-    const heights = points.map(({ x, z }) => terrainHeight(x, z))
+function stampTile(tile) {
+  const g = tile.grid, n = g.cols * g.rows, sum = new Float32Array(n), weight = new Float32Array(n)
+  const x1 = g.x0 + (g.cols - 1) * g.step, z1 = g.z0 + (g.rows - 1) * g.step
+  roadsAround(tile).filter(road => road.kind === 'road' && !road.bridge).forEach(road => {
+    if (!road.profile) {
+      const curve = new THREE.CatmullRomCurve3(road.p.map(([x, z]) => new THREE.Vector3(x, 0, z)), false, 'centripetal')
+      const points = curve.getSpacedPoints(Math.max(2, Math.ceil(curve.getLength() / 10)))
+      const heights = points.map(({ x, z }) => smoothHeight(x, z))
+      road.profile = points.map(({ x, z }, i) => {
+        let total = 0, count = 0
+        for (let k = -3; k <= 3; k++) if (heights[i + k] !== undefined) { total += heights[i + k]; count++ }
+        return [x, z, total / count, heights[i]]
+      })
+    }
     const reach = road.w / 2 + 6
-    points.forEach(({ x, z }, i) => {
-      let total = 0, count = 0
-      for (let k = -3; k <= 3; k++) if (heights[i + k] !== undefined) { total += heights[i + k]; count++ }
-      const level = total / count
-      if (Math.abs(level - heights[i]) > 2.5) return
-      const c0 = clamp(Math.floor((x - reach - T.x0) / T.sx), 0, T.cols - 1), c1 = clamp(Math.ceil((x + reach - T.x0) / T.sx), 0, T.cols - 1)
-      const r0 = clamp(Math.floor((z - reach - T.z0) / T.sz), 0, T.rows - 1), r1 = clamp(Math.ceil((z + reach - T.z0) / T.sz), 0, T.rows - 1)
+    road.profile.forEach(([x, z, level, height]) => {
+      if (Math.abs(level - height) > 2.5 || x < g.x0 - reach || x > x1 + reach || z < g.z0 - reach || z > z1 + reach) return
+      const c0 = clamp(Math.floor((x - reach - g.x0) / g.step), 0, g.cols - 1), c1 = clamp(Math.ceil((x + reach - g.x0) / g.step), 0, g.cols - 1)
+      const r0 = clamp(Math.floor((z - reach - g.z0) / g.step), 0, g.rows - 1), r1 = clamp(Math.ceil((z + reach - g.z0) / g.step), 0, g.rows - 1)
       for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
-        const distance = Math.hypot(T.x0 + c * T.sx - x, T.z0 + r * T.sz - z)
+        const distance = Math.hypot(g.x0 + c * g.step - x, g.z0 + r * g.step - z)
         if (distance > reach) continue
         const w = distance < road.w / 2 + 1 ? 1 : 1 - (distance - road.w / 2 - 1) / 5
-        sum[r * T.cols + c] += level * w
-        weight[r * T.cols + c] += w
+        sum[r * g.cols + c] += level * w
+        weight[r * g.cols + c] += w
       }
     })
   })
-  T.heights = T.heights.map((h, i) => weight[i] ? h + (sum[i] / weight[i] - h) * Math.min(1, weight[i]) : h)
+  tile.heights = tile.smooth.map((h, i) => weight[i] ? h + (sum[i] / weight[i] - h) * Math.min(1, weight[i]) : h)
 }
 
-function markDualCarriageways() {
-  const wide = world.roads.filter(road => road.kind === 'road' && road.w >= 7)
-  const grid = new Map()
-  wide.forEach(road => road.p.forEach(([x, z]) => { const key = cellKey(x, z); if (!grid.has(key)) grid.set(key, new Set()); grid.get(key).add(road) }))
-  wide.forEach(road => {
-    const [mx, mz] = road.p[Math.floor(road.p.length / 2)]
-    const cx = Math.floor(mx / CELL), cz = Math.floor(mz / CELL)
-    const candidates = new Set()
-    for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) (grid.get(`${cx + dx},${cz + dz}`) || []).forEach(other => candidates.add(other))
-    road.dual = [...candidates].some(other => other !== road && other.name === road.name && other.w === road.w && !other.p.some(p => road.p.some(q => p[0] === q[0] && p[1] === q[1])) && polylineDistance(mx, mz, other.p) < (road.w >= 10 ? 32 : 20))
-  })
-  wide.forEach(road => { if (road.dual) road.w = road.w >= 10 ? 9 : 5.5 })
+function rasterTile(tile) {
+  const g = tile.grid
+  tile.kinds = new Uint8Array(g.cols * g.rows)
+  tile.waste = new Uint8Array(g.cols * g.rows)
+  tile.data.areas.forEach(area => { const kind = KINDS_BY_INDEX.indexOf(area.kind); if (kind > 0) rasterize(tile, area.p, tile.kinds, kind) })
+  ZONES.filter(zone => zone.kinds.includes('zombie')).forEach(zone => rasterize(tile, zone.p, tile.waste, 1))
 }
 
-function prepareRoads() {
-  markDualCarriageways()
+
+const elevatedAt = new Map()
+
+function markDual(road, candidates) {
+  const [mx, mz] = road.p[Math.floor(road.p.length / 2)]
+  road.dual = candidates.some(other => other !== road && other.name === road.name && other.w === road.w && !other.p.some(p => road.p.some(q => p[0] === q[0] && p[1] === q[1])) && polylineDistance(mx, mz, other.p) < (road.w >= 10 ? 32 : 20))
+  if (road.dual) road.w = road.w >= 10 ? 9 : 5.5
+}
+
+function prepareRoad(road, bigWater) {
   const key = ([x, z]) => `${x},${z}`
-  const bigWater = world.roads.filter(road => road.level !== undefined)
-
-  world.roads.forEach(road => {
-    road.hs = road.p.map(([x, z]) => terrainHeight(x, z))
-    if (road.kind === 'water') {
-      road.hs = road.level === undefined ? road.hs.map(h => h + 0.04) : road.p.map(() => road.level + 0.2)
-    } else if (road.bridge) {
-      const [mx, mz] = road.p[Math.floor(road.p.length / 2)]
-      const waterLevel = Math.max(-Infinity, ...bigWater.filter(water => polylineDistance(mx, mz, water.p) < water.w).map(water => water.level + 7))
-      const deck = Math.max(road.hs[0], road.hs[road.hs.length - 1])
-      road.hs = road.p.map(() => Math.max(deck, waterLevel))
-    }
-  })
-
-  const elevatedAt = new Map()
-  world.roads.filter(road => road.bridge).forEach(road => road.p.forEach((p, i) => elevatedAt.set(key(p), Math.max(elevatedAt.get(key(p)) || 0, road.hs[i]))))
-
-  world.roads.filter(road => road.kind !== 'water' && !road.bridge).forEach(road => {
+  road.hs = road.p.map(([x, z]) => terrainHeight(x, z))
+  if (road.kind === 'water') {
+    road.hs = road.level === undefined ? road.hs.map(h => h + 0.04) : road.p.map(() => road.level + 0.2)
+  } else if (road.bridge) {
+    const [mx, mz] = road.p[Math.floor(road.p.length / 2)]
+    const waterLevel = Math.max(-Infinity, ...bigWater.filter(water => polylineDistance(mx, mz, water.p) < water.w).map(water => water.level + 7))
+    const deck = Math.max(road.hs[0], road.hs[road.hs.length - 1])
+    road.hs = road.p.map(() => Math.max(deck, waterLevel))
+    road.p.forEach((p, i) => elevatedAt.set(key(p), Math.max(elevatedAt.get(key(p)) || 0, road.hs[i])))
+  } else {
     road.p.forEach((p, i) => { if (elevatedAt.has(key(p))) road.hs[i] = Math.max(road.hs[i], elevatedAt.get(key(p))) })
     const span = i => Math.hypot(road.p[i][0] - road.p[i - 1][0], road.p[i][1] - road.p[i - 1][1])
     for (let i = 1; i < road.p.length; i++) road.hs[i] = Math.max(road.hs[i], road.hs[i - 1] - GRADE * span(i))
     for (let i = road.p.length - 2; i >= 0; i--) road.hs[i] = Math.max(road.hs[i], road.hs[i + 1] - GRADE * span(i + 1))
+  }
+  road.ground = road.p.map(([x, z]) => terrainHeight(x, z))
+  road.elevated = road.hs.some((h, i) => h > road.ground[i] + 0.4)
+  const lifted = (y, ground) => road.kind === 'water' || road.bridge || (road.elevated && y > ground + 0.4)
+  road.nodes = road.p.map(([x, z], i) => [x, z, lifted(road.hs[i], road.ground[i]) ? road.hs[i] : road.ground[i], lifted(road.hs[i], road.ground[i])])
+  const curve = new THREE.CatmullRomCurve3(road.p.map(([x, z], i) => new THREE.Vector3(x, road.hs[i], z)), false, 'centripetal')
+  road.samples = curve.getSpacedPoints(Math.max(1, Math.ceil(curve.getLength() / 4))).map(({ x, y, z }) => {
+    const ground = terrainHeight(x, z)
+    if (road.kind === 'water' || road.bridge) return [x, z, y, true]
+    const level = Math.max(y, ground)
+    return lifted(level, ground) ? [x, z, level, true] : [x, z, ground, false]
   })
+  road.prepared = true
+  if (road.kind !== 'road') return
+  road.segments = road.samples.slice(1).map((b, i) => ({ road, a: road.samples[i], b }))
+  road.segments.forEach(segment => {
+    const key = cellKey((segment.a[0] + segment.b[0]) / 2, (segment.a[1] + segment.b[1]) / 2)
+    if (!segmentGrid.has(key)) segmentGrid.set(key, new Set())
+    segmentGrid.get(key).add(segment)
+  })
+  if (road.elevated || road.bridge) return
+  const coarse = road.samples.filter((_, i) => i % 3 === 0 || i === road.samples.length - 1)
+  road.asphalt = [bufferRing(coarse, road.w)]
+  road.walkway = road.w >= 5 && road.w <= 8 && !road.dual ? [bufferRing(coarse, road.w + 3.1)] : null
+  const xs = road.samples.map(p => p[0]), zs = road.samples.map(p => p[1]), margin = road.w / 2 + 2
+  road.cells = []
+  for (let cx = Math.floor((Math.min(...xs) - margin) / SUB); cx <= Math.floor((Math.max(...xs) + margin) / SUB); cx++)
+    for (let cz = Math.floor((Math.min(...zs) - margin) / SUB); cz <= Math.floor((Math.max(...zs) + margin) / SUB); cz++) {
+      const key = `${cx},${cz}`
+      if (!roadCells.has(key)) roadCells.set(key, new Set())
+      roadCells.get(key).add(road)
+      road.cells.push(key)
+    }
+}
 
-  world.roads.forEach(road => {
-    road.ground = road.p.map(([x, z]) => terrainHeight(x, z))
-    road.elevated = road.hs.some((h, i) => h > road.ground[i] + 0.4)
-    const lifted = (y, ground) => road.kind === 'water' || road.bridge || (road.elevated && y > ground + 0.4)
-    road.nodes = road.p.map(([x, z], i) => [x, z, lifted(road.hs[i], road.ground[i]) ? road.hs[i] : road.ground[i], lifted(road.hs[i], road.ground[i])])
-    const curve = new THREE.CatmullRomCurve3(road.p.map(([x, z], i) => new THREE.Vector3(x, road.hs[i], z)), false, 'centripetal')
-    road.samples = curve.getSpacedPoints(Math.max(1, Math.ceil(curve.getLength() / 4))).map(({ x, y, z }) => {
-      const ground = terrainHeight(x, z)
-      if (road.kind === 'water' || road.bridge) return [x, z, y, true]
-      const level = Math.max(y, ground)
-      return lifted(level, ground) ? [x, z, level, true] : [x, z, ground, false]
-    })
+function unregisterRoad(road) {
+  roadsById.delete(road.id)
+  ;(road.segments || []).forEach(segment => {
+    const key = cellKey((segment.a[0] + segment.b[0]) / 2, (segment.a[1] + segment.b[1]) / 2)
+    segmentGrid.get(key)?.delete(segment)
   })
+  ;(road.cells || []).forEach(key => roadCells.get(key)?.delete(road))
 }
 
 function pointAt(points, distance) {
@@ -722,8 +826,7 @@ function onAnyAsphalt(x, z, margin) {
 function onOtherAsphalt(x, z, road, margin) {
   const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL)
   for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
-    for (const i of segmentGrid.get(`${cx + dx},${cz + dz}`) || []) {
-      const segment = segments[i]
+    for (const segment of segmentGrid.get(`${cx + dx},${cz + dz}`) || []) {
       if (segment.road !== road && pointToSegment(x, z, segment.a, segment.b).distance < segment.road.w / 2 + margin) return true
     }
   }
@@ -784,8 +887,8 @@ function disc([x, z, y, elevated], radius, lift) {
   return geometry
 }
 
-function strip(road, width, lift, color, parts, nodes = road.nodes) {
-  parts.push(paint(ribbon(road.samples, width, lift), color))
+function strip(points, nodes, width, lift, color, parts) {
+  if (points.length > 1) parts.push(paint(ribbon(points, width, lift), color))
   if (width >= 3) nodes.forEach(node => parts.push(paint(disc(node, width / 2, lift), color)))
 }
 
@@ -807,49 +910,50 @@ function quad(cx, cz, ux, uz, nx, nz, width, bottom, height, color) {
 
 // WORLD:
 
-function buildRoads(groups) {
-  const nodes = new Map()
-  world.roads.filter(road => road.kind === 'road').forEach(road => road.p.forEach(point => {
-    const key = point.join(',')
-    if (!nodes.has(key)) nodes.set(key, [])
-    nodes.get(key).push(road)
-  }))
-  const clearance = (road, point) => Math.max(0, ...nodes.get(point.join(',')).filter(other => other !== road).map(other => other.w / 2 + 1.5))
-  const gaps = (road, extra) => {
-    let travelled = 0, index = 0
-    return road.p.flatMap((point, i) => {
-      for (; index < road.samples.length - 1 && Math.hypot(road.samples[index][0] - point[0], road.samples[index][1] - point[1]) > 2.5; index++) {
-        travelled += Math.hypot(road.samples[index + 1][0] - road.samples[index][0], road.samples[index + 1][1] - road.samples[index][1])
-      }
-      const cut = clearance(road, point)
-      return cut ? [[travelled - cut - extra, travelled + cut + extra]] : []
-    })
-  }
+function insideBox([x, z], [x0, z0, x1, z1]) {
+  return x >= x0 && x < x1 && z >= z0 && z < z1
+}
 
-  world.roads.forEach(road => {
-    const points = road.samples
-    if (road.kind === 'rail') {
-      strip(road, 3.4, 0.12, COLORS.ballast, groups.plain)
-      for (const side of [-1, 1]) band(points, side * 0.72, 0.1, 0.3, COLORS.rail, groups.plain)
-    } else if (road.kind === 'water') {
-      strip(road, road.w, road.level === undefined ? 0.12 : 0, COLORS.water, groups.plain)
-    } else if (road.kind === 'path') {
-      strip(road, Math.min(road.w, 1.5), 0.12, COLORS.path, groups.gravel)
-    } else {
-      if (road.elevated || road.bridge) strip(road, road.w, 0.22, COLORS.road, groups.asphalt)
+function piecesIn(samples, box) {
+  const pieces = []
+  let piece = []
+  samples.forEach(sample => {
+    if (insideBox(sample, box)) piece.push(sample)
+    else { if (piece.length > 1) pieces.push(piece); piece = [] }
+  })
+  if (piece.length > 1) pieces.push(piece)
+  return pieces
+}
+
+function buildRoadLinework(tile, road, groups) {
+  const box = tileBounds(tile)
+  const pieces = piecesIn(road.samples, box), nodes = road.nodes.filter(node => insideBox(node, box))
+  if (!pieces.length && !nodes.length) return
+  if (road.kind === 'rail') {
+    pieces.forEach(points => { strip(points, [], 3.4, 0.12, COLORS.ballast, groups.plain); for (const side of [-1, 1]) band(points, side * 0.72, 0.1, 0.3, COLORS.rail, groups.plain) })
+    strip([], nodes, 3.4, 0.12, COLORS.ballast, groups.plain)
+  } else if (road.kind === 'water') {
+    const lift = road.level === undefined ? 0.12 : 0
+    pieces.forEach(points => strip(points, [], road.w, lift, COLORS.water, groups.plain))
+    strip([], nodes, road.w, lift, COLORS.water, groups.plain)
+  } else if (road.kind === 'path') {
+    pieces.forEach(points => strip(points, [], Math.min(road.w, 1.5), 0.12, COLORS.path, groups.gravel))
+    strip([], nodes, Math.min(road.w, 1.5), 0.12, COLORS.path, groups.gravel)
+  } else {
+    if (road.elevated || road.bridge) { pieces.forEach(points => strip(points, [], road.w, 0.22, COLORS.road, groups.asphalt)); strip([], nodes, road.w, 0.22, COLORS.road, groups.asphalt) }
+    pieces.forEach(points => {
       if (road.w >= 4) for (const lane of [-1, 1]) for (const wheel of [-1, 1]) band(points, lane * road.w / 4 + wheel * 0.62, 0.115, 0.45, COLORS.wear, groups.plain)
       if (road.w >= 7 || road.dual) {
-            splitWhere(points, ([x, z]) => onOtherAsphalt(x, z, road, 2.5)).forEach(marks => {
-                if (!road.dual || road.w >= 9) dashes(marks, groups.plain)
+        splitWhere(points, ([x, z]) => onOtherAsphalt(x, z, road, 2.5)).forEach(marks => {
+          if (!road.dual || road.w >= 9) dashes(marks, groups.plain)
           for (const side of [-1, 1]) band(marks, side * (road.w / 2 - 0.35), 0.12, 0.26, COLORS.dash, groups.plain)
         })
       }
-            if (road.bridge) bridge(points, road.w, groups.plain)
-            else if (road.elevated) embankment(points, road.w, groups.ground)
-          }
-        })
-            indexRoadTiles()
-          }
+      if (road.bridge) bridge(points, road.w, groups.plain)
+      else if (road.elevated) embankment(points, road.w, groups.ground)
+    })
+  }
+}
 
 function bufferRing(points, width) {
   const sides = edges(points, width)
@@ -898,48 +1002,48 @@ function curb(ring, top, bottom, parts) {
   parts.push(paint(skirt(upper, lower), COLORS.curb))
 }
 
-const roadTiles = new Map(), builtRoadTiles = new Set()
-
-function indexRoadTiles() {
-  world.roads.filter(road => road.kind === 'road' && !road.elevated && !road.bridge).forEach(road => {
-    const coarse = road.samples.filter((_, i) => i % 3 === 0 || i === road.samples.length - 1)
-    road.asphalt = [bufferRing(coarse, road.w)]
-    road.walkway = road.w >= 5 && road.w <= 8 && !road.dual ? [bufferRing(coarse, road.w + 3.1)] : null
-    const xs = road.samples.map(p => p[0]), zs = road.samples.map(p => p[1])
-    const margin = road.w / 2 + 2
-    for (let tx = Math.floor((Math.min(...xs) - margin) / TILE); tx <= Math.floor((Math.max(...xs) + margin) / TILE); tx++)
-      for (let tz = Math.floor((Math.min(...zs) - margin) / TILE); tz <= Math.floor((Math.max(...zs) + margin) / TILE); tz++) {
-        const key = `${tx},${tz}`
-        if (!roadTiles.has(key)) roadTiles.set(key, [])
-        roadTiles.get(key).push(road)
-      }
-  })
-}
-
+const roadCells = new Map(), asphaltCells = new Map()
 const roadWorker = new Worker('roadworker.js', { type: 'module' })
-const pendingRoadTiles = new Map()
+let pendingCell = null
+
 roadWorker.onmessage = ({ data }) => {
-  const resolve = pendingRoadTiles.get(data.key)
-  pendingRoadTiles.delete(data.key)
-  if (data.error) console.warn('road polygons failed for tile', data.key, data.error)
-  else placeRoadTile(data.asphalt, data.walkways)
+  const cell = asphaltCells.get(data.key)
+  const resolve = pendingCell && pendingCell.key === data.key ? pendingCell.resolve : null
+  pendingCell = null
+  if (data.error) console.warn('road polygons failed for cell', data.key, data.error)
+  else if (cell && cell.gen === data.gen && cell.tile && cell.tile.status !== 'evicted') cell.meshes = placeAsphalt(cell.tile, data.asphalt, data.walkways)
   if (resolve) resolve()
 }
 
-function buildRoadTile(key) {
-  builtRoadTiles.add(key)
-  const roads = roadTiles.get(key)
-  if (!roads) return Promise.resolve()
-  const [tx, tz] = key.split(',').map(Number)
-  const box = [[[tx * TILE - 1, tz * TILE - 1], [(tx + 1) * TILE + 1, tz * TILE - 1], [(tx + 1) * TILE + 1, (tz + 1) * TILE + 1], [tx * TILE - 1, (tz + 1) * TILE + 1], [tx * TILE - 1, tz * TILE - 1]]]
-  const started = performance.now()
+function cellBox(kx, kz, margin) {
+  return [kx * SUB - margin, kz * SUB - margin, (kx + 1) * SUB + margin, (kz + 1) * SUB + margin]
+}
+
+function cellReady(kx, kz) {
+  const [x0, z0, x1, z1] = cellBox(kx, kz, 9)
+  for (const x of [x0, x1]) for (const z of [z0, z1]) {
+    const tile = tileAt(x, z)
+    if (!tile || (tile.status !== 'ready' && tile.status !== 'empty')) return false
+  }
+  return true
+}
+
+function buildAsphaltCell(kx, kz) {
+  const key = `${kx},${kz}`, roads = [...(roadCells.get(key) || [])].filter(road => road.asphalt)
+  const tile = tileAt((kx + 0.5) * SUB, (kz + 0.5) * SUB)
+  const cell = { tile, gen: (tile && tile.gen) || 0, meshes: [] }
+  asphaltCells.set(key, cell)
+  if (!roads.length || !tile) return Promise.resolve()
+  const [x0, z0, x1, z1] = cellBox(kx, kz, 1)
+  const box = [[[x0, z0], [x1, z0], [x1, z1], [x0, z1], [x0, z0]]]
   return new Promise(resolve => {
-    pendingRoadTiles.set(key, () => { console.info(`tile ${key}: ${Math.round(performance.now() - started)} ms`); resolve() })
-    roadWorker.postMessage({ key, box, asphalt: roads.map(road => road.asphalt[0]), walkways: roads.filter(road => road.walkway).map(road => road.walkway[0]) })
+    pendingCell = { key, resolve }
+    roadWorker.postMessage({ key, gen: cell.gen, box, asphalt: roads.map(road => road.asphalt[0]), walkways: roads.filter(road => road.walkway).map(road => road.walkway[0]) })
   })
 }
 
-function placeRoadTile(asphalt, walkways) {
+function placeAsphalt(tile, asphalt, walkways) {
+  const meshes = []
   const place = (geometries, material, textured) => {
     if (!geometries.length) return
     const geometry = mergeGeometries(geometries)
@@ -947,23 +1051,36 @@ function placeRoadTile(asphalt, walkways) {
     const mesh = new THREE.Mesh(geometry, material)
     mesh.receiveShadow = true
     scene.add(mesh)
+    meshes.push(mesh)
+    tile.meshes.push(mesh)
   }
   const curbs = []
   place(asphalt.map(polygon => polygonGeometry(polygon, 0.22, COLORS.road)), MATERIALS.asphalt, true)
   place(walkways.map(polygon => polygonGeometry(polygon, 0.3, COLORS.sidewalk)), MATERIALS.paving, true)
   walkways.forEach(polygon => polygon.forEach(ring => curb(ring, 0.3, 0.16, curbs)))
   place(curbs, MATERIALS.plain, false)
+  return meshes
 }
 
-function streamRoadTiles(reach, budget) {
-  if (pendingRoadTiles.size) return []
-  const cx = Math.floor(state.x / TILE), cz = Math.floor(state.z / TILE)
-  const started = []
-  for (let dx = -reach; dx <= reach && budget > 0; dx++) for (let dz = -reach; dz <= reach && budget > 0; dz++) {
+function streamAsphalt(reach = 4) {
+  if (pendingCell) return null
+  const cx = Math.floor(state.x / SUB), cz = Math.floor(state.z / SUB)
+  const wanted = []
+  for (let dx = -reach; dx <= reach; dx++) for (let dz = -reach; dz <= reach; dz++) {
     const key = `${cx + dx},${cz + dz}`
-    if (roadTiles.has(key) && !builtRoadTiles.has(key)) { started.push(buildRoadTile(key)); budget-- }
+    if (roadCells.has(key) && !asphaltCells.has(key) && cellReady(cx + dx, cz + dz)) wanted.push([dx * dx + dz * dz, cx + dx, cz + dz])
   }
-  return started
+  if (!wanted.length) return null
+  const [, kx, kz] = wanted.sort((a, b) => a[0] - b[0])[0]
+  return buildAsphaltCell(kx, kz)
+}
+
+async function awaitAsphalt(reach) {
+  for (let i = 0; i < 60; i++) {
+    const job = streamAsphalt(reach)
+    if (!job) return
+    await job
+  }
 }
 
 function bridge(points, width, parts) {
@@ -1173,29 +1290,26 @@ function frontEdge(building) {
   return best
 }
 
-function buildBuildings(groups) {
-  world.buildings.forEach(building => {
-    const heights = building.p.map(([x, z]) => terrainHeight(x, z))
-    building.base = Math.max(...heights)
-    const seed = building.p[0][0] * 13 + building.p[0][1] * 7
-    building.c = Math.abs(Math.floor(seed)) % COLORS.walls.length
-    building.h = +(building.h + ((seed % 1) - 0.5) * 1.2).toFixed(1)
-    if (building.roof === 'hip' && Math.abs(seed) % 5 === 0) building.roof = 'flat'
-    else if (building.roof === 'flat' && building.h <= 8 && Math.abs(seed) % 7 === 0) building.roof = 'hip'
-    const bottom = Math.min(...heights) - 0.5
-    const shape = new THREE.Shape(building.p.map(([x, z]) => new THREE.Vector2(x, -z)))
-    building.plaster = Math.abs(Math.floor(seed / 3)) % 4 === 0
-    building.group = building.plaster ? 'plaster' : ['brickRed', 'brickRed', 'brickBrown', 'brickYellow'][Math.abs(Math.floor(seed / 5)) % 4]
-    building.wall = building.plaster ? COLORS.plaster[building.c % COLORS.plaster.length] : new THREE.Color(0xffffff).lerp(COLORS.walls[building.c], 0.2)
-    const walls = new THREE.ExtrudeGeometry(shape, { depth: building.base + building.h - bottom, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, bottom, 0)
-    groups[building.group].push(paint(walls, building.wall))
-    building.bottom = bottom
-    if (building.roof === 'hip') hipRoof(building, groups)
-    facadeDetails(building, groups, false)
-    const key = tileKey(building.p[0][0], building.p[0][1])
-    if (!buildingTiles.has(key)) buildingTiles.set(key, [])
-    buildingTiles.get(key).push(building)
-  })
+function prepareBuilding(building) {
+  const heights = building.p.map(([x, z]) => terrainHeight(x, z))
+  building.base = Math.max(...heights)
+  const seed = building.p[0][0] * 13 + building.p[0][1] * 7
+  building.c = Math.abs(Math.floor(seed)) % COLORS.walls.length
+  building.h = +(building.h + ((seed % 1) - 0.5) * 1.2).toFixed(1)
+  if (building.roof === 'hip' && Math.abs(seed) % 5 === 0) building.roof = 'flat'
+  else if (building.roof === 'flat' && building.h <= 8 && Math.abs(seed) % 7 === 0) building.roof = 'hip'
+  building.bottom = Math.min(...heights) - 0.5
+  building.plaster = Math.abs(Math.floor(seed / 3)) % 4 === 0
+  building.group = building.plaster ? 'plaster' : ['brickRed', 'brickRed', 'brickBrown', 'brickYellow'][Math.abs(Math.floor(seed / 5)) % 4]
+  building.wall = building.plaster ? COLORS.plaster[building.c % COLORS.plaster.length] : new THREE.Color(0xffffff).lerp(COLORS.walls[building.c], 0.2)
+}
+
+function buildBuilding(building, groups) {
+  const shape = new THREE.Shape(building.p.map(([x, z]) => new THREE.Vector2(x, -z)))
+  const walls = new THREE.ExtrudeGeometry(shape, { depth: building.base + building.h - building.bottom, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, building.bottom, 0)
+  groups[building.group].push(paint(walls, building.wall))
+  if (building.roof === 'hip') hipRoof(building, groups)
+  facadeDetails(building, groups, false)
 }
 
 function buildingExtras(building, groups) {
@@ -1252,10 +1366,8 @@ function tileNature(tx, tz) {
       new THREE.IcosahedronGeometry(0.06, 0).translate(dx, 0.32, dz)
     ]))
   }
-  const [minX, minZ, maxX, maxZ] = world.bounds
-  const x0 = Math.max(tx, minX), z0 = Math.max(tz, minZ), x1 = Math.min(tx + TILE, maxX), z1 = Math.min(tz + TILE, maxZ)
-  if (x1 <= x0 || z1 <= z0) return []
-  const rand = seeded(Math.round(tx / TILE) * 73856093 ^ Math.round(tz / TILE) * 19349663)
+  const x0 = tx, z0 = tz, x1 = tx + SUB, z1 = tz + SUB
+  const rand = seeded(Math.round(tx / SUB) * 73856093 ^ Math.round(tz / SUB) * 19349663)
   const tufts = [], bushes = [], flowers = [[], [], []]
   const count = (x1 - x0) * (z1 - z0) / 40
   for (let i = 0; i < count; i++) {
@@ -1279,7 +1391,7 @@ function tileNature(tx, tz) {
 function startDetailTile(kx, kz) {
   const key = `${kx},${kz}`
   detailTiles.set(key, [])
-  detailJob = { key, tx: kx * TILE, tz: kz * TILE, buildings: buildingTiles.get(key) || [], index: 0, groups: newGroups() }
+  detailJob = { key, tx: kx * SUB, tz: kz * SUB, buildings: buildingTiles.get(key) || [], index: 0, groups: newGroups() }
 }
 
 function advanceDetailJob(batch = DETAIL_BATCH) {
@@ -1292,11 +1404,12 @@ function advanceDetailJob(batch = DETAIL_BATCH) {
 
 function streamDetails() {
   if (detailJob) return advanceDetailJob()
-  const cx = Math.floor(state.x / TILE), cz = Math.floor(state.z / TILE)
+  const cx = Math.floor(state.x / SUB), cz = Math.floor(state.z / SUB)
   const wanted = []
   for (let dx = -DETAIL_REACH; dx <= DETAIL_REACH; dx++) for (let dz = -DETAIL_REACH; dz <= DETAIL_REACH; dz++) {
     const key = `${cx + dx},${cz + dz}`
-    if (!detailTiles.has(key)) wanted.push([Math.hypot((cx + dx + 0.5) * TILE - state.x, (cz + dz + 0.5) * TILE - state.z), cx + dx, cz + dz])
+    const owner = tileAt((cx + dx + 0.5) * SUB, (cz + dz + 0.5) * SUB)
+    if (!detailTiles.has(key) && owner && owner.built.buildings) wanted.push([Math.hypot((cx + dx + 0.5) * SUB - state.x, (cz + dz + 0.5) * SUB - state.z), cx + dx, cz + dz])
   }
   if (wanted.length) return startDetailTile(...wanted.sort((a, b) => a[0] - b[0])[0].slice(1))
   detailTiles.forEach((meshes, key) => {
@@ -1308,7 +1421,9 @@ function streamDetails() {
 }
 
 function buildDetailsHere() {
-  startDetailTile(Math.floor(state.x / TILE), Math.floor(state.z / TILE))
+  const owner = tileAt(state.x, state.z)
+  if (!owner || !owner.built.buildings) return
+  startDetailTile(Math.floor(state.x / SUB), Math.floor(state.z / SUB))
   while (detailJob) advanceDetailJob(Infinity)
 }
 
@@ -1349,82 +1464,263 @@ function gutters(building, parts) {
   })
 }
 
-let kindAt = () => 'ground'
 
-function buildGround() {
-  const [minX, minZ, maxX, maxZ] = world.bounds
-  const kinds = new Uint8Array(T.cols * T.rows)
-  const KINDS_BY_INDEX = ['ground', 'grass', 'forest', 'field', 'water', 'parking', 'lot']
-  world.areas.forEach(area => {
-    const kind = KINDS_BY_INDEX.indexOf(area.kind)
-    if (kind > 0) rasterize(area.p, kinds, kind)
-  })
-  kindAt = (x, z) => KINDS_BY_INDEX[kinds[clamp(Math.round((z - T.z0) / T.sz), 0, T.rows - 1) * T.cols + clamp(Math.round((x - T.x0) / T.sx), 0, T.cols - 1)]]
-  const segments = Math.round(TILE / Math.min(T.sx, T.sz, 10))
-  for (let tx = minX; tx < maxX; tx += TILE) for (let tz = minZ; tz < maxZ; tz += TILE) {
-    const width = Math.min(TILE, maxX - tx), depth = Math.min(TILE, maxZ - tz)
-    const geometry = new THREE.PlaneGeometry(width, depth, segments, segments).rotateX(-Math.PI / 2).translate(tx + width / 2, 0, tz + depth / 2)
-    const position = geometry.attributes.position
-    const colors = new Float32Array(position.count * 3)
-    for (let i = 0; i < position.count; i++) {
-      const x = position.getX(i), z = position.getZ(i)
-      position.setY(i, terrainHeight(x, z))
-      const kind = kindAt(x, z)
-      const color = wasteAt(x, z) && kind !== 'water' && kind !== 'parking' ? COLORS[kind].clone().lerp(DEAD, 0.75) : COLORS[kind]
-      colors.set([color.r, color.g, color.b], i * 3)
+function buildGround(tile) {
+  const g = tile.grid
+  const geometry = new THREE.PlaneGeometry(TILE, TILE, g.cols - 1, g.rows - 1).rotateX(-Math.PI / 2).translate(g.x0 + TILE / 2, 0, g.z0 + TILE / 2)
+  const position = geometry.attributes.position
+  const colors = new Float32Array(position.count * 3), normals = new Float32Array(position.count * 3)
+  for (let i = 0; i < position.count; i++) {
+    const x = position.getX(i), z = position.getZ(i)
+    position.setY(i, terrainHeight(x, z))
+    const dx = (terrainHeight(x + g.step, z) - terrainHeight(x - g.step, z)) / (2 * g.step), dz = (terrainHeight(x, z + g.step) - terrainHeight(x, z - g.step)) / (2 * g.step)
+    const length = Math.hypot(dx, 1, dz)
+    normals.set([-dx / length, 1 / length, -dz / length], i * 3)
+    const kind = kindAt(x, z)
+    const color = wasteAt(x, z) && kind !== 'water' && kind !== 'parking' ? COLORS[kind].clone().lerp(DEAD, 0.75) : COLORS[kind]
+    colors.set([color.r, color.g, color.b], i * 3)
+  }
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
+  uvWorld(geometry)
+  const ground = new THREE.Mesh(geometry, MATERIALS.ground)
+  ground.receiveShadow = true
+  scene.add(ground)
+  tile.meshes.push(ground)
+  const [x0, z0, x1, z1] = tileBounds(tile)
+  const rim = [[x0, z0], [x1, z0], [x1, z1], [x0, z1], [x0, z0]].map(([x, z]) => [x, terrainHeight(x, z), z])
+  const apron = new THREE.Mesh(paint(skirt(rim, rim.map(([x, y, z]) => [x, y - 1.5, z])), COLORS.ground), MATERIALS.plain)
+  scene.add(apron)
+  tile.meshes.push(apron)
+}
+
+// TILE STREAMING (de wereld komt per kilometer van de server):
+
+const REACH = { fetch: 2, keep: 3, ground: 2, roads: 2, buildings: 1 }
+const jobs = []
+let streamTimer = 0, pendingPoops = [], loadingHint = false
+
+const tileBounds = tile => [tile.tx * TILE, tile.tz * TILE, (tile.tx + 1) * TILE, (tile.tz + 1) * TILE]
+const tileDistance = tile => Math.max(Math.abs(tile.tx - Math.floor(state.x / TILE)), Math.abs(tile.tz - Math.floor(state.z / TILE)))
+const present = tile => tile && tile.status !== 'fetching'
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+async function fetchTile(tx, tz) {
+  const key = `${tx},${tz}`
+  const tile = { tx, tz, key, status: 'fetching', gen: 0, meshes: [], built: {}, scheduled: {}, roads: [], buildings: [] }
+  tiles.set(key, tile)
+  for (let attempt = 0; tiles.get(key) === tile; attempt++) {
+    try {
+      const response = await fetch(`tiles/${TILE_VERSION}/${tx}_${tz}.json`)
+      if (response.ok) return receiveTile(tile, await response.json())
+      if (response.status === 404) return receiveTile(tile, { outside: true })
+      await sleep(response.status === 202 ? 2000 : Math.min(30000, 2000 * 2 ** attempt))
+    } catch {
+      await sleep(Math.min(30000, 2000 * 2 ** attempt))
     }
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-    uvWorld(geometry)
-    geometry.computeVertexNormals()
-    const ground = new THREE.Mesh(geometry, MATERIALS.ground)
-    ground.receiveShadow = true
-    scene.add(ground)
   }
 }
 
-async function buildWorld() {
-  const groups = { plain: [], asphalt: [], paving: [], gravel: [], brickRed: [], brickBrown: [], brickYellow: [], plaster: [], hedge: [], tiles: [], ground: [], sign: [], window: [] }
-  await phase('roads', () => buildRoads(groups))
-  await phase('buildings', () => buildBuildings(groups))
-  await phase('merge', () => { for (const [name, parts] of Object.entries(groups)) {
-    const tiles = new Map()
-    parts.forEach(part => {
-      const geometry = part.index ? part.toNonIndexed() : part
-      if (name === 'plain') geometry.deleteAttribute('uv')
-      else if (!geometry.attributes.uv) uvWorld(geometry)
-      geometry.computeBoundingBox()
-      const center = geometry.boundingBox.getCenter(new THREE.Vector3())
-      const key = tileKey(center.x, center.z)
-      if (!tiles.has(key)) tiles.set(key, [])
-      tiles.get(key).push(geometry)
-    })
-        tiles.forEach(geometries => {
-          const mesh = new THREE.Mesh(mergeGeometries(geometries), MATERIALS[name])
-          mesh.castShadow = mesh.receiveShadow = true
-          scene.add(mesh)
-        })
-        } })
-        await phase('ground', buildGround)
-        await phase('trees', buildTrees)
-          buildTrains()
-          buildSky()
-      }
+function receiveTile(tile, data) {
+  if (tiles.get(tile.key) !== tile) return
+  tile.data = { roads: [], buildings: [], areas: [], trees: [], places: [], towns: [], ...data }
+  if (data.outside || !data.terrain) { tile.status = 'empty'; return }
+  tile.grid = { x0: data.terrain.x0, z0: data.terrain.z0, step: data.terrain.step, cols: data.terrain.cols, rows: data.terrain.rows }
+  tile.raw = Float32Array.from(data.terrain.heights)
+  tile.data.roads.forEach(source => {
+    let road = roadsById.get(source.id)
+    if (!road) { road = { ...source, owners: new Set() }; roadsById.set(source.id, road) }
+    road.owners.add(tile.key)
+    tile.roads.push(road)
+  })
+  tile.buildings = tile.data.buildings
+  tile.buildings.forEach(building => {
+    const xs = building.p.map(p => p[0]), zs = building.p.map(p => p[1])
+    building.cells = []
+    for (let x = Math.floor(Math.min(...xs) / CELL); x <= Math.floor(Math.max(...xs) / CELL); x++) for (let z = Math.floor(Math.min(...zs) / CELL); z <= Math.floor(Math.max(...zs) / CELL); z++) {
+      const key = `${x},${z}`
+      if (!grid.has(key)) grid.set(key, new Set())
+      grid.get(key).add(building)
+      building.cells.push(key)
+    }
+  })
+  tile.status = 'data'
+}
 
-const TILE = 400
-const tileKey = (x, z) => `${Math.floor(x / TILE)},${Math.floor(z / TILE)}`
+function evictTile(tile) {
+  tile.status = 'evicted'
+  tile.gen++
+  tiles.delete(tile.key)
+  tile.meshes.forEach(mesh => { scene.remove(mesh); if (mesh.isInstancedMesh) mesh.dispose(); else mesh.geometry.dispose() })
+  tile.meshes = []
+  tile.buildings.forEach(building => building.cells.forEach(key => grid.get(key)?.delete(building)))
+  tile.roads.forEach(road => { road.owners.delete(tile.key); if (!road.owners.size) unregisterRoad(road) })
+  releaseSigns(tile)
+  const [x0, z0, x1, z1] = tileBounds(tile)
+  const within = key => { const [kx, kz] = key.split(',').map(Number); return insideBox([(kx + 0.5) * SUB, (kz + 0.5) * SUB], [x0, z0, x1, z1]) }
+  ;[...asphaltCells.keys()].filter(within).forEach(key => asphaltCells.delete(key))
+  ;[...buildingTiles.keys()].filter(within).forEach(key => buildingTiles.delete(key))
+  ;[...detailTiles.entries()].filter(([key]) => within(key)).forEach(([key, meshes]) => { meshes.forEach(mesh => { scene.remove(mesh); if (mesh.userData.instanced) mesh.dispose(); else mesh.geometry.dispose() }); detailTiles.delete(key) })
+}
 
-function instances(geometry, color, placements, map, variation = 0, tiled = true, shadows = true) {
-  const material = solid(color, map)
-  const tiles = new Map()
+function schedule(kind, tile, order, step) {
+  if (tile.scheduled[kind]) return
+  tile.scheduled[kind] = true
+  jobs.push({ kind, tile, order, step, gen: tile.gen })
+}
+
+function planTile(tile) {
+  const distance = tileDistance(tile)
+  if (tile.status === 'data' && neighbourTiles(tile).every(present)) schedule('terrain', tile, 0, finalizeStep(tile))
+  if (tile.status !== 'ready') return
+  if (!tile.built.prepare) return schedule('prepare', tile, 1, prepareStep(tile))
+  if (distance <= REACH.ground && !tile.built.ground) schedule('ground', tile, 2, () => { buildGround(tile); tile.built.ground = true; return true })
+  if (distance <= REACH.roads && !tile.built.roads) schedule('roads', tile, 3, lineworkStep(tile))
+  if (distance <= REACH.buildings && !tile.built.buildings) schedule('buildings', tile, 4, buildingsStep(tile))
+  if (distance <= REACH.buildings && !tile.built.trees) schedule('trees', tile, 5, () => { buildTrees(tile); tile.built.trees = true; return true })
+  if (distance <= REACH.buildings && !tile.built.trains) schedule('trains', tile, 6, () => { buildTrains(tile); tile.built.trains = true; return true })
+}
+
+function finalizeStep(tile) {
+  const steps = [() => smoothTile(tile), () => digTile(tile), () => stampTile(tile), () => { rasterTile(tile); tile.status = 'ready' }]
+  return () => { steps.shift()(); return !steps.length }
+}
+
+function prepareStep(tile) {
+  let queue = null
+  return () => {
+    if (!queue) {
+      const wide = roadsAround(tile).filter(road => road.kind === 'road' && road.w >= 7 && !road.prepared)
+      tile.roads.filter(road => wide.includes(road)).forEach(road => markDual(road, wide))
+      queue = tile.roads.filter(road => !road.prepared).sort((a, b) => (b.bridge ? 1 : 0) - (a.bridge ? 1 : 0))
+    }
+    const bigWater = [...roadsById.values()].filter(road => road.level !== undefined)
+    for (let n = 0; n < 40 && queue.length; n++) prepareRoad(queue.shift(), bigWater)
+    if (queue.length) return false
+    tile.built.prepare = true
+    return true
+  }
+}
+
+function lineworkStep(tile) {
+  const queue = [...tile.roads], groups = newGroups()
+  return () => {
+    for (let n = 0; n < 30 && queue.length; n++) { const road = queue.shift(); if (road.prepared) buildRoadLinework(tile, road, groups) }
+    if (queue.length) return false
+    tile.meshes.push(...mergeGroups(groups))
+    tile.built.roads = true
+    return true
+  }
+}
+
+function buildingsStep(tile) {
+  const cells = new Map()
+  tile.buildings.forEach(building => { const key = subKey(building.p[0][0], building.p[0][1]); if (!cells.has(key)) cells.set(key, []); cells.get(key).push(building) })
+  const queue = [...cells.entries()]
+  let current = null
+  return () => {
+    if (!current) {
+      if (!queue.length) { tile.built.buildings = true; return true }
+      const [key, list] = queue.shift()
+      current = { key, list, index: 0, groups: newGroups() }
+    }
+    const end = Math.min(current.list.length, current.index + 20)
+    for (; current.index < end; current.index++) {
+      const building = current.list[current.index]
+      if (building.sign) allocateSign(building.sign, tile.key)
+      prepareBuilding(building)
+      buildBuilding(building, current.groups)
+    }
+    if (current.index < current.list.length) return false
+    tile.meshes.push(...mergeGroups(current.groups))
+    buildingTiles.set(current.key, current.list)
+    current = null
+    return false
+  }
+}
+
+function pump(budget, filter) {
+  const end = performance.now() + budget
+  while (jobs.length && performance.now() < end) {
+    let best = null, bestScore = Infinity
+    for (let i = jobs.length - 1; i >= 0; i--) {
+      const job = jobs[i]
+      if (job.gen !== job.tile.gen) { jobs.splice(i, 1); continue }
+      if (filter && !filter(job)) continue
+      const score = job.order * 500 + Math.hypot((job.tile.tx + 0.5) * TILE - state.x, (job.tile.tz + 0.5) * TILE - state.z)
+      if (score < bestScore) { bestScore = score; best = job }
+    }
+    if (!best) return
+    if (best.step()) { jobs.splice(jobs.indexOf(best), 1); best.tile.scheduled[best.kind] = false; planTile(best.tile) }
+  }
+}
+
+function streamTiles() {
+  const cx = Math.floor(state.x / TILE), cz = Math.floor(state.z / TILE)
+  const ahead = Math.abs(state.speed) > 5 ? [Math.round(Math.sin(state.heading)), Math.round(Math.cos(state.heading))] : [0, 0]
+  for (let dx = -REACH.fetch; dx <= REACH.fetch; dx++) for (let dz = -REACH.fetch; dz <= REACH.fetch; dz++) {
+    const key = `${cx + dx},${cz + dz}`
+    if (!tiles.has(key)) fetchTile(cx + dx, cz + dz)
+  }
+  if (ahead[0] || ahead[1]) for (let side = -1; side <= 1; side++) {
+    const tx = cx + ahead[0] * (REACH.fetch + 1) + (ahead[0] ? 0 : side), tz = cz + ahead[1] * (REACH.fetch + 1) + (ahead[1] ? 0 : side)
+    if (!tiles.has(`${tx},${tz}`)) fetchTile(tx, tz)
+  }
+  tiles.forEach(tile => { if (tileDistance(tile) > REACH.keep) evictTile(tile); else planTile(tile) })
+}
+
+async function loadTilesAround(x, z) {
+  ZONES = (await fetch('tiles/world.json', { cache: 'no-store' }).then(response => response.json())).zones || []
+  const cx = Math.floor(x / TILE), cz = Math.floor(z / TILE)
+  const pending = []
+  for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) if (!tiles.has(`${cx + dx},${cz + dz}`)) pending.push(fetchTile(cx + dx, cz + dz))
+  await Promise.all(pending)
+}
+
+async function pumpFor(kinds, reach) {
+  for (;;) {
+    tiles.forEach(planTile)
+    const filter = job => kinds.includes(job.kind) && tileDistance(job.tile) <= reach
+    if (!jobs.some(job => job.gen === job.tile.gen && filter(job))) return
+    pump(40, filter)
+    await sleep(0)
+  }
+}
+
+function tilesNear(reach) {
+  return [...tiles.values()].filter(tile => tile.data && tileDistance(tile) <= reach)
+}
+
+function seams() {
+  let worst = 0
+  tiles.forEach(tile => {
+    const east = tiles.get(`${tile.tx + 1},${tile.tz}`), south = tiles.get(`${tile.tx},${tile.tz + 1}`), g = tile.grid
+    if (!tile.heights || !g) return
+    if (east && east.heights) for (let r = 0; r < g.rows; r++) worst = Math.max(worst, Math.abs(tile.heights[r * g.cols + g.cols - 1] - east.heights[r * g.cols]))
+    if (south && south.heights) for (let c = 0; c < g.cols; c++) worst = Math.max(worst, Math.abs(tile.heights[(g.rows - 1) * g.cols + c] - south.heights[c]))
+  })
+  return worst
+}
+
+const SUB = 250
+const subKey = (x, z) => `${Math.floor(x / SUB)},${Math.floor(z / SUB)}`
+
+const solidCache = new Map()
+
+function instances(geometry, color, placements, map, variation = 0, tiled = false, shadows = true) {
+  const cacheKey = `${color}|${map ? map.uuid : ''}`
+  if (!solidCache.has(cacheKey)) solidCache.set(cacheKey, solid(color, map))
+  const material = solidCache.get(cacheKey)
+  const buckets = new Map()
   placements.forEach(placement => {
-    const key = tiled ? tileKey(placement[0], placement[2]) : 'all'
-    if (!tiles.has(key)) tiles.set(key, [])
-    tiles.get(key).push(placement)
+    const key = tiled ? subKey(placement[0], placement[2]) : 'all'
+    if (!buckets.has(key)) buckets.set(key, [])
+    buckets.get(key).push(placement)
   })
   const matrix = new THREE.Matrix4()
   const tint = new THREE.Color()
   let mesh
-  tiles.forEach(list => {
+  buckets.forEach(list => {
     mesh = new THREE.InstancedMesh(geometry, material, list.length)
     list.forEach(([x, y, z, scale, rotation], i) => {
       matrix.makeRotationY(rotation || 0).scale(new THREE.Vector3(scale, scale, scale)).setPosition(x, y, z)
@@ -1457,30 +1753,43 @@ function treeFits(x, z) {
   return !segment || distance > segment.road.w / 2 + 1.5
 }
 
-function buildTrees() {
-  const placements = world.trees.filter(([x, z]) => treeFits(x, z)).map(([x, z]) => [x, terrainHeight(x, z) - 0.1, z, treeScale(x, z), (x * 3.1 + z * 1.7) % 6.28])
+const TREE_SHAPES = {}
+
+function treeShapes() {
+  if (TREE_SHAPES.trunk) return TREE_SHAPES
+  TREE_SHAPES.deadTrunk = new THREE.CylinderGeometry(0.12, 0.3, 3.2, 5).translate(0, 1.6, 0)
+  TREE_SHAPES.deadBranch = new THREE.CylinderGeometry(0.05, 0.1, 1.6, 4).rotateZ(0.7).translate(0.4, 3.1, 0)
+  TREE_SHAPES.trunk = mergeGeometries([
+    new THREE.CylinderGeometry(0.2, 0.36, 2.6, 7).translate(0, 1.3, 0),
+    branch(0.1, 2.3, 0, 1.5, 0.2, -0.7), branch(-0.1, 2.5, 0.1, 1.3, -0.5, 0.6), branch(0, 2.7, -0.1, 1.2, 0.8, 0.1)
+  ])
+  TREE_SHAPES.round = blobs([[0, 3.7, 0, 1.7], [1.0, 3.3, 0.3, 1.1], [-0.9, 3.4, -0.4, 1.2], [0.2, 4.6, -0.5, 1.0], [-0.3, 3.1, 1.0, 0.9], [0.6, 4.2, 0.9, 0.8]])
+  TREE_SHAPES.tall = blobs([[0, 4.2, 0, 1.3, 1, 1.6, 1], [0.7, 3.6, 0.4, 0.9, 1, 1.3, 1], [-0.7, 3.9, -0.3, 0.9, 1, 1.4, 1], [0.1, 5.6, 0.2, 0.8]])
+  TREE_SHAPES.coniferTrunk = new THREE.CylinderGeometry(0.18, 0.3, 1.8, 6).translate(0, 0.9, 0)
+  TREE_SHAPES.conifer = mergeGeometries([
+    new THREE.ConeGeometry(1.8, 2.6, 8).translate(0, 2.6, 0),
+    new THREE.ConeGeometry(1.35, 2.4, 8).translate(0, 4.0, 0),
+    new THREE.ConeGeometry(0.85, 2.2, 8).translate(0, 5.3, 0)
+  ])
+  return TREE_SHAPES
+}
+
+function buildTrees(tile) {
+  const shapes = treeShapes()
+  const placements = tile.data.trees.filter(([x, z]) => treeFits(x, z)).map(([x, z]) => [x, terrainHeight(x, z) - 0.1, z, treeScale(x, z), (x * 3.1 + z * 1.7) % 6.28])
   const dead = placements.filter(([x, , z]) => wasteAt(x, z))
   const alive = placements.filter(p => !dead.includes(p))
   const conifers = alive.filter(([x, , z]) => (Math.abs(x * 3 + z * 5) | 0) % 4 === 0)
   const broad = alive.filter(p => !conifers.includes(p))
   const tall = broad.filter(([x, , z]) => (Math.abs(x * 5 + z * 3) | 0) % 3 === 0)
   const round = broad.filter(p => !tall.includes(p))
-  instances(new THREE.CylinderGeometry(0.12, 0.3, 3.2, 5).translate(0, 1.6, 0), 0x4a4038, dead)
-  instances(new THREE.CylinderGeometry(0.05, 0.1, 1.6, 4).rotateZ(0.7).translate(0.4, 3.1, 0), 0x4a4038, dead)
-  const trunk = mergeGeometries([
-    new THREE.CylinderGeometry(0.2, 0.36, 2.6, 7).translate(0, 1.3, 0),
-    branch(0.1, 2.3, 0, 1.5, 0.2, -0.7), branch(-0.1, 2.5, 0.1, 1.3, -0.5, 0.6), branch(0, 2.7, -0.1, 1.2, 0.8, 0.1)
-  ])
-  instances(trunk, 0x6b4a2c, round)
-  instances(blobs([[0, 3.7, 0, 1.7], [1.0, 3.3, 0.3, 1.1], [-0.9, 3.4, -0.4, 1.2], [0.2, 4.6, -0.5, 1.0], [-0.3, 3.1, 1.0, 0.9], [0.6, 4.2, 0.9, 0.8]]), 0xffffff, round, TEXTURES.foliage, 0.14)
-  instances(trunk, 0x5c4a3a, tall)
-  instances(blobs([[0, 4.2, 0, 1.3, 1, 1.6, 1], [0.7, 3.6, 0.4, 0.9, 1, 1.3, 1], [-0.7, 3.9, -0.3, 0.9, 1, 1.4, 1], [0.1, 5.6, 0.2, 0.8]]), 0xffffff, tall, TEXTURES.foliage, 0.12)
-  instances(new THREE.CylinderGeometry(0.18, 0.3, 1.8, 6).translate(0, 0.9, 0), 0x5a3d25, conifers)
-  instances(mergeGeometries([
-    new THREE.ConeGeometry(1.8, 2.6, 8).translate(0, 2.6, 0),
-    new THREE.ConeGeometry(1.35, 2.4, 8).translate(0, 4.0, 0),
-    new THREE.ConeGeometry(0.85, 2.2, 8).translate(0, 5.3, 0)
-  ]), 0xffffff, conifers, TEXTURES.foliage, 0.08)
+  const meshes = [
+    instances(shapes.deadTrunk, 0x4a4038, dead), instances(shapes.deadBranch, 0x4a4038, dead),
+    instances(shapes.trunk, 0x6b4a2c, round), instances(shapes.round, 0xffffff, round, TEXTURES.foliage, 0.14),
+    instances(shapes.trunk, 0x5c4a3a, tall), instances(shapes.tall, 0xffffff, tall, TEXTURES.foliage, 0.12),
+    instances(shapes.coniferTrunk, 0x5a3d25, conifers), instances(shapes.conifer, 0xffffff, conifers, TEXTURES.foliage, 0.08)
+  ].filter(Boolean)
+  tile.meshes.push(...meshes)
 }
 
 let skyDome, clouds
@@ -1517,10 +1826,10 @@ function dirty(amount) {
   bodyParts.forEach((mesh, i) => mesh.material.color.copy(CLEAN).lerp(FILTHY, state.dirt * (i ? 0.8 : 1)))
 }
 
-function buildTrains() {
-  const rails = world.roads.filter(road => road.kind === 'rail')
+function buildTrains(tile) {
+  const rails = roadsAround(tile).filter(road => road.kind === 'rail' && road.prepared)
   if (!rails.length) return
-  ;(world.places || []).filter(place => place.kind === 'station').forEach(place => {
+  tile.data.places.filter(place => place.kind === 'station').forEach(place => {
     let best = null
     rails.forEach(road => {
       for (let i = 1; i < road.samples.length; i++) {
@@ -1545,6 +1854,9 @@ function buildTrains() {
     train.position.set(x, terrainHeight(x, z) + 0.15, z)
     train.rotation.y = heading
     scene.add(train)
+    train.isInstancedMesh = false
+    train.geometry = { dispose() { train.traverse(child => child.geometry && child.geometry.dispose()) } }
+    tile.meshes.push(train)
   })
 }
 
@@ -1984,9 +2296,9 @@ let currentTown = null, townTimer = 0
 
 function updateTown(dt) {
   townTimer -= dt
-  if (townTimer > 0 || !world.towns) return
+  if (townTimer > 0) return
   townTimer = 0.5
-  const town = world.towns.reduce((best, town) => {
+  const town = tilesNear(3).flatMap(tile => tile.data.towns).reduce((best, town) => {
     const score = Math.hypot(town.x - state.x, town.z - state.z) / (town.town ? 3 : 1)
     return score < best.score ? { town, score } : best
   }, { town: null, score: 900 }).town
@@ -2203,18 +2515,6 @@ function updateExplosion(dt) {
 const grid = new Map()
 const cellKey = (x, z) => `${Math.floor(x / CELL)},${Math.floor(z / CELL)}`
 
-function index(items, bounds) {
-  items.forEach((item, i) => {
-    const [minX, minZ, maxX, maxZ] = bounds(item)
-    for (let x = Math.floor(minX / CELL); x <= Math.floor(maxX / CELL); x++)
-      for (let z = Math.floor(minZ / CELL); z <= Math.floor(maxZ / CELL); z++) {
-        const key = `${x},${z}`
-        if (!grid.has(key)) grid.set(key, [])
-        grid.get(key).push(i)
-      }
-  })
-}
-
 function inside(polygon, x, z) {
   let hit = false
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
@@ -2225,28 +2525,20 @@ function inside(polygon, x, z) {
 }
 
 function blocked(x, z) {
-  return (grid.get(cellKey(x, z)) || []).some(i => inside(world.buildings[i].p, x, z))
+  for (const building of grid.get(cellKey(x, z)) || []) if (inside(building.p, x, z)) return true
+  return false
 }
 
-let segments = []
 const segmentGrid = new Map()
 
-function indexRoads() {
-  segments = world.roads.filter(road => road.kind === 'road').flatMap(road => road.samples.slice(1).map((b, i) => ({ road, a: road.samples[i], b })))
-  segments.forEach((segment, i) => {
-    const key = cellKey((segment.a[0] + segment.b[0]) / 2, (segment.a[1] + segment.b[1]) / 2)
-    if (!segmentGrid.has(key)) segmentGrid.set(key, [])
-    segmentGrid.get(key).push(i)
-  })
-}
 
 function nearestSegment(x, z, reach = 1) {
   let best = null, bestDistance = Infinity, bestT = 0
   const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL)
   for (let dx = -reach; dx <= reach; dx++) for (let dz = -reach; dz <= reach; dz++) {
-    for (const i of segmentGrid.get(`${cx + dx},${cz + dz}`) || []) {
-      const { t, distance } = pointToSegment(x, z, segments[i].a, segments[i].b)
-      if (distance < bestDistance) { bestDistance = distance; best = segments[i]; bestT = t }
+    for (const segment of segmentGrid.get(`${cx + dx},${cz + dz}`) || []) {
+      const { t, distance } = pointToSegment(x, z, segment.a, segment.b)
+      if (distance < bestDistance) { bestDistance = distance; best = segment; bestT = t }
     }
   }
   return { segment: best, distance: bestDistance, t: bestT }
@@ -2292,20 +2584,23 @@ function drawMinimap(dt) {
     road.p.forEach(([x, z], i) => i ? map.lineTo(x, z) : map.moveTo(x, z))
     map.stroke()
   }
-  world.roads.filter(near).forEach(road => {
+  const drawnRoads = new Set()
+  tilesNear(1).forEach(tile => tile.roads.forEach(road => {
+    if (drawnRoads.has(road) || !near(road)) return
+    drawnRoads.add(road)
         if (road.kind === 'water') stroke(road, '#4f9fd6', Math.max(road.w, 4))
         else if (road.kind === 'road' && road.w < 5) stroke(road, '#8d9096', 4)
     else if (road.kind === 'road') stroke(road, road.elevated ? '#8a8d90' : '#5a5d63', Math.max(road.w + 2, 6))
-  })
+  }))
   map.fillStyle = '#6b6259'
   const cx = Math.floor(state.x / CELL), cz = Math.floor(state.z / CELL), reach = Math.ceil(MAP_RADIUS / CELL)
   const drawn = new Set()
   for (let dx = -reach; dx <= reach; dx++) for (let dz = -reach; dz <= reach; dz++) {
-    for (const i of grid.get(`${cx + dx},${cz + dz}`) || []) {
-      if (drawn.has(i)) continue
-      drawn.add(i)
+    for (const building of grid.get(`${cx + dx},${cz + dz}`) || []) {
+      if (drawn.has(building)) continue
+      drawn.add(building)
       map.beginPath()
-      world.buildings[i].p.forEach(([x, z], k) => k ? map.lineTo(x, z) : map.moveTo(x, z))
+      building.p.forEach(([x, z], k) => k ? map.lineTo(x, z) : map.moveTo(x, z))
       map.fill()
     }
   }
@@ -2337,21 +2632,10 @@ function drawMinimap(dt) {
 
 // GAME:
 
-index(world.buildings, building => {
-  const xs = building.p.map(p => p[0]), zs = building.p.map(p => p[1])
-  return [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)]
-})
-const waste = new Uint8Array(T.cols * T.rows)
-;(world.zones || []).filter(zone => zone.kind.includes('zombie')).forEach(zone => rasterize(zone.p, waste, 1))
-const wasteAt = (x, z) => waste[clamp(Math.round((z - T.z0) / T.sz), 0, T.rows - 1) * T.cols + clamp(Math.round((x - T.x0) / T.sx), 0, T.cols - 1)] === 1
 const DEAD = new THREE.Color(0x8a7f66)
-await phase('terrain', () => { smoothTerrain(); digWater() })
-await phase('stamp', stampRoads)
-await phase('prepare', prepareRoads)
-await phase('index', indexRoads)
-await buildWorld()
 const car = buildCar()
 buildNpcMeshes()
+buildSky()
 
 // SAMPLES (drop mp3/wav files in assets/sounds to replace the synthesized sounds):
 
@@ -2770,19 +3054,18 @@ addEventListener('keydown', startAudio, { once: true })
 // BIG MAP:
 
 const bigmap = document.getElementById('bigmap')
-let worldImage
 
-function drawWorldImage() {
-  const [minX, minZ, maxX, maxZ] = world.bounds
-  const size = 2048, scale = size / Math.max(maxX - minX, maxZ - minZ)
+function tileImage(tile) {
+  if (tile.mapImage) return tile.mapImage
+  const size = 256, scale = size / TILE
   const canvas = document.createElement('canvas')
   canvas.width = canvas.height = size
   const ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#dfe9cf'
+  ctx.fillStyle = tile.status === 'empty' ? '#c9d3e6' : '#dfe9cf'
   ctx.fillRect(0, 0, size, size)
   ctx.save()
   ctx.scale(scale, scale)
-  ctx.translate(-minX, -minZ)
+  ctx.translate(-tile.tx * TILE, -tile.tz * TILE)
   ctx.lineCap = ctx.lineJoin = 'round'
   const stroke = (road, color, width) => {
     ctx.strokeStyle = color
@@ -2791,7 +3074,7 @@ function drawWorldImage() {
     road.p.forEach(([x, z], i) => i ? ctx.lineTo(x, z) : ctx.moveTo(x, z))
     ctx.stroke()
   }
-  world.areas.forEach(area => {
+  tile.data.areas.forEach(area => {
     if (area.kind !== 'water' && area.kind !== 'forest') return
     ctx.fillStyle = area.kind === 'water' ? '#6fb3e0' : '#b9d3a0'
     ctx.beginPath()
@@ -2799,33 +3082,40 @@ function drawWorldImage() {
     ctx.fill()
   })
   ctx.fillStyle = '#8a8378'
-  world.buildings.forEach(building => { const [x, z] = building.p[0]; ctx.fillRect(x - 3, z - 3, 6, 6) })
-  world.roads.forEach(road => {
-    if (road.kind === 'water') stroke(road, '#6fb3e0', Math.max(road.w, 6))
-    else if (road.kind === 'rail') stroke(road, '#3a3a3a', 3)
-    else if (road.kind === 'road') stroke(road, road.w >= 9 ? '#4a4d55' : '#6b6e75', Math.max(road.w, 5))
+  tile.buildings.forEach(building => { const [x, z] = building.p[0]; ctx.fillRect(x - 4, z - 4, 8, 8) })
+  tile.roads.forEach(road => {
+    if (road.kind === 'water') stroke(road, '#6fb3e0', Math.max(road.w, 8))
+    else if (road.kind === 'rail') stroke(road, '#3a3a3a', 5)
+    else if (road.kind === 'road') stroke(road, road.w >= 9 ? '#4a4d55' : '#6b6e75', Math.max(road.w, 8))
   })
   ctx.restore()
-  return { canvas, scale, minX, minZ }
+  tile.mapImage = canvas
+  return canvas
 }
 
 function drawBigMap() {
   if (bigmap.hidden) return
-  worldImage ||= drawWorldImage()
   const ctx = bigmap.getContext('2d')
   const size = Math.min(innerWidth, innerHeight) - 40
   bigmap.width = bigmap.height = size
-  ctx.drawImage(worldImage.canvas, 0, 0, size, size)
-  const factor = size / 2048 * worldImage.scale
+  const span = 5 * TILE, factor = size / span, ox = state.x - span / 2, oz = state.z - span / 2
+  ctx.fillStyle = '#c9d3e6'
+  ctx.fillRect(0, 0, size, size)
+  tiles.forEach(tile => {
+    if (!tile.data) return
+    const px = (tile.tx * TILE - ox) * factor, pz = (tile.tz * TILE - oz) * factor
+    if (px > size || pz > size || px + TILE * factor < 0 || pz + TILE * factor < 0) return
+    ctx.drawImage(tileImage(tile), px, pz, TILE * factor, TILE * factor)
+  })
   const dot = (x, z, color, radius, label) => {
-    const px = (x - worldImage.minX) * factor, pz = (z - worldImage.minZ) * factor
+    const px = (x - ox) * factor, pz = (z - oz) * factor
     ctx.fillStyle = color
     ctx.beginPath()
     ctx.arc(px, pz, radius, 0, Math.PI * 2)
     ctx.fill()
     if (label) { ctx.fillStyle = '#111'; ctx.font = 'bold 13px system-ui'; ctx.fillText(label, px + 8, pz + 4) }
   }
-  ;(world.places || []).forEach(place => dot(place.x, place.z, '#ffffffaa', 3))
+  tilesNear(3).flatMap(tile => tile.data.places).forEach(place => dot(place.x, place.z, '#ffffffaa', 3))
   others.forEach(other => dot(other.group.position.x, other.group.position.z, '#2f7cff', 6, other.name))
   dot(state.x, state.z, '#e53935', 7, myName())
 }
@@ -2875,7 +3165,7 @@ function connect() {
   return new Promise(resolve => {
     const attempt = () => {
       socket = new WebSocket(`ws://${location.host}`)
-      socket.onopen = () => send({ join: { name: myName(), world: WORLD } })
+      socket.onopen = () => send({ join: { name: myName(), world: 'limburg' } })
       socket.onmessage = ({ data }) => {
         const message = JSON.parse(data)
         if (message.welcome) { welcome(message.welcome); resolve() }
@@ -2894,8 +3184,10 @@ function welcome(data) {
   serverOffset = data.t - performance.now() / 1000
   KIND_NAMES = data.kinds
   NPC_INFO = data.npcs
+  if (data.tileSize) { TILE = data.tileSize; TILE_VERSION = data.tileVersion; ORIGIN = data.origin; START = { x: data.start.x, z: data.start.z, heading: data.start.heading } }
   showScore(data.score)
-  data.poops.forEach(addPoop)
+  if (loadingEl.isConnected) pendingPoops = data.poops
+  else data.poops.forEach(addPoop)
   hintEl.textContent = HINT
 }
 
@@ -3020,7 +3312,7 @@ const travelList = document.getElementById('travel-list')
 
 function renderTravel() {
   const towns = new Map()
-  ;(world.places || []).forEach(place => {
+  tilesNear(3).flatMap(tile => tile.data.places).forEach(place => {
     const town = place.town || 'Overig'
     if (!towns.has(town)) towns.set(town, [])
     towns.get(town).push(place)
@@ -3038,7 +3330,7 @@ function toggleTravel(open = travel.hidden) {
 }
 
 function travelTo(name) {
-  const place = (world.places || []).find(place => place.name === name)
+  const place = tilesNear(3).flatMap(tile => tile.data.places).find(place => place.name === name)
   if (!place) return
     const { segment, distance, t } = nearestSegment(place.x, place.z, 6)
     if (segment && distance < 250) {
@@ -3059,7 +3351,7 @@ function travelTo(name) {
 travelList.addEventListener('click', event => { const item = event.target.closest('li'); if (item) travelTo(item.dataset.name) })
 
 const keys = new Set()
-window.debug = { keys, npcs, poops, others, detailTiles, travelTo, SIGNS, signs, camera, scene, MATERIALS, respawn, unstick, applySnapshot, applyFrame, EVENTS, get socket() { return socket }, get myId() { return myId }, get engineSample() { return engineSample }, get screech() { return screech }, get hardstyleSampled() { return hardstyleSampled }, get explosion() { return explosion }, get audio() { return audio }, get metal() { return metal }, get state() { return state } }
+window.debug = { keys, npcs, poops, others, detailTiles, tiles, jobs, asphaltCells, roadsById, signSlots, seams, tileAt, evictTile, streamTiles, travelTo, camera, scene, MATERIALS, respawn, unstick, applySnapshot, applyFrame, EVENTS, get socket() { return socket }, get myId() { return myId }, get engineSample() { return engineSample }, get screech() { return screech }, get hardstyleSampled() { return hardstyleSampled }, get explosion() { return explosion }, get audio() { return audio }, get metal() { return metal }, get state() { return state } }
 addEventListener('keydown', event => {
   if (event.code === 'Escape' && !travel.hidden) return toggleTravel(false)
   if (event.code === 'Escape' && !/INPUT|TEXTAREA/.test(event.target.tagName)) return toggleBigMap()
@@ -3076,8 +3368,7 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight)
 })
 
-const state = { x: world.start.x, z: world.start.z, heading: world.start.heading, speed: 0, steer: 0, shake: 0, drunk: 0 }
-const [minX, minZ, maxX, maxZ] = world.bounds
+const state = { x: 0, z: 0, heading: 0, speed: 0, steer: 0, shake: 0, drunk: 0 }
 const speedEl = document.getElementById('speed')
 const streetEl = document.getElementById('street')
 let last = performance.now()
@@ -3140,18 +3431,18 @@ function step(dt, now) {
 
   const x = state.x + Math.sin(state.heading) * state.speed * dt
   const z = state.z + Math.cos(state.heading) * state.speed * dt
-  const free = (px, pz) => !corners(px, pz, state.heading).some(([cx, cz]) => blocked(cx, cz))
+  const free = (px, pz) => !corners(px, pz, state.heading).some(([cx, cz]) => blocked(cx, cz) || tileAt(cx, cz)?.status === 'empty')
 
   if (free(x, z)) {
-    state.x = clamp(x, minX, maxX)
-    state.z = clamp(z, minZ, maxZ)
+    state.x = x
+    state.z = z
     state.stuck = 0
   } else if ([0.35, -0.35, 0.7, -0.7, 1.05, -1.05].some(turn => {
     const angle = state.heading + turn, move = state.speed * dt * Math.cos(turn)
     const sx = state.x + Math.sin(angle) * move, sz = state.z + Math.cos(angle) * move
     if (!free(sx, sz)) return false
-    state.x = clamp(sx, minX, maxX)
-    state.z = clamp(sz, minZ, maxZ)
+    state.x = sx
+    state.z = sz
     return true
   })) {
     state.speed *= 1 - Math.min(1, 1.5 * dt)
@@ -3198,8 +3489,16 @@ function step(dt, now) {
     streetTimer = 0.25
     streetEl.textContent = streetName(state.x, state.z)
   }
-  streamRoadTiles(2, 1)
+  streamTimer -= dt
+  if (streamTimer <= 0) { streamTimer = 0.25; streamTiles() }
+  pump(5)
+  streamAsphalt()
   streamDetails()
+  const here = tileAt(state.x, state.z)
+  const waiting = !here || here.status === 'fetching' || here.status === 'data' || here.status === 'failed'
+  if (waiting) state.speed *= Math.max(0, 1 - 4 * dt)
+  if (waiting || (here && here.status === 'empty' && state.stuck > 0.3)) { hintEl.textContent = waiting ? 'Wereld laden…' : 'Hier eindigt Limburg'; loadingHint = true }
+  else if (loadingHint) { hintEl.textContent = HINT; loadingHint = false }
   updateNpcs(dt, now)
   pickUpPoop()
   pooTrail(now)
@@ -3216,8 +3515,6 @@ function step(dt, now) {
       updateTown(dt)
     drawMinimap(dt)
   }
-
-camera.position.set(state.x - Math.sin(state.heading) * 9, groundHeight(state.x, state.z) + 4.5, state.z - Math.cos(state.heading) * 9)
 
 let snapshotAt = performance.now() + 20000
 
@@ -3240,14 +3537,23 @@ function frame(now) {
   requestAnimationFrame(frame)
 }
 
-loadingPhase.textContent = 'Asfalt gieten…'
-await Promise.all(streamRoadTiles(0, 1))
-console.info(`ready: ${Math.round(performance.now())} ms`)
+await phase('server', connect)
+Object.assign(state, START)
+await phase('fetch', () => loadTilesAround(state.x, state.z))
+await phase('terrain', () => pumpFor(['terrain', 'prepare'], 1))
+await phase('ground', () => pumpFor(['ground'], 1))
+await phase('roads', () => pumpFor(['roads'], 0))
+await phase('buildings', () => pumpFor(['buildings'], 0))
+await phase('trees', () => pumpFor(['trees', 'trains'], 0))
+await phase('asphalt', () => awaitAsphalt(1))
+await phase('details', buildDetailsHere)
+pendingPoops.forEach(addPoop)
+pendingPoops = []
+camera.position.set(state.x - Math.sin(state.heading) * 9, groundHeight(state.x, state.z) + 4.5, state.z - Math.cos(state.heading) * 9)
+console.info(`ready: ${Math.round(performance.now())} ms, seams ${seams().toFixed(3)} m`)
 clearInterval(slideTimer)
 stopMetal()
 nameInput.blur()
-await phase('details', buildDetailsHere)
-await phase('server', connect)
 renderPlayers()
 loadingEl.classList.add('done')
 setTimeout(() => loadingEl.remove(), 900)

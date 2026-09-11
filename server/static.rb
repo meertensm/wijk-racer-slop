@@ -1,3 +1,5 @@
+require 'json'
+
 class Static
   TYPES = {
     'html' => 'text/html; charset=utf-8', 'js'  => 'text/javascript', 'json' => 'application/json',
@@ -13,13 +15,28 @@ class Static
     if request.method != 'GET'
       head(socket, '405 Method Not Allowed')
     elsif (file = resolve(request.path))
-      head(socket, '200 OK', 'Content-Type' => TYPES.fetch(File.extname(file).delete('.'), 'application/octet-stream'), 'Content-Length' => File.size(file))
-      IO.copy_stream(file, socket)
+      self.file(socket, file)
     else
       head(socket, '404 Not Found')
     end
   ensure
     socket.close
+  end
+
+  def file(socket, file, extra = {})
+    head(socket, '200 OK', { 'Content-Type' => TYPES.fetch(File.extname(file).delete('.'), 'application/octet-stream'), 'Content-Length' => File.size(file) }.merge(extra))
+    IO.copy_stream(file, socket)
+  end
+
+  def json(socket, status, hash, extra = {})
+    body = JSON.generate(hash)
+    head(socket, status, { 'Content-Type' => 'application/json', 'Content-Length' => body.bytesize }.merge(extra))
+    socket.write(body)
+  end
+
+  def head(socket, status, extra = {})
+    headers = { 'Cache-Control' => 'no-store', 'Connection' => 'close' }.merge(extra)
+    socket.write "HTTP/1.1 #{status}\r\n#{headers.map { |name, value| "#{name}: #{value}\r\n" }.join}\r\n"
   end
 
   private
@@ -31,8 +48,4 @@ class Static
     file if file.start_with?("#{root}/") && File.file?(file)
   end
 
-  def head(socket, status, extra = {})
-    headers = { 'Cache-Control' => 'no-store', 'Connection' => 'close' }.merge(extra)
-    socket.write "HTTP/1.1 #{status}\r\n#{headers.map { |name, value| "#{name}: #{value}\r\n" }.join}\r\n"
-  end
 end

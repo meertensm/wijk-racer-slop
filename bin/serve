@@ -6,9 +6,23 @@ Dir.chdir(root)
   geometry grid entity entities/structure entities/road entities/plant entities/vehicle entities/zone entities/spot entities/place entities/poop
   world voice npc npcs/humanoid_npc npcs/beagle npcs/labradoodle npcs/dog_walker npcs/bald_man npcs/zwerver npcs/junkie npcs/zombie npcs/speakerboy npcs/tattoo_man
   population player scores game http_request static web_socket client server
+  limburg tiles/projection tiles/tile tiles/tile_store tiles/world_slicer tiles/tile_endpoint tiles/nominatim start
 ].each { |file| require "#{root}/server/#{file}" }
 
-world = World.load(ARGV[1] || 'rooseveltstraat')
-npcs  = Population.new(world).build
-puts "#{world.name}: #{npcs.length} npcs"
-Server.new(Integer(ARGV[0] || 8765), Game.new(world, npcs, Scores.new('data/scores.json')), root).run
+address    = ARGV[1] || Limburg::ADDRESS
+projection = Projection.new(*Limburg::ORIGIN)
+nominatim  = Nominatim.new('data/geo')
+slicer     = WorldSlicer.new('worlds/sittard-geleen.json')
+store      = TileStore.new("data/tiles/#{Tile::VERSION}", slicer)
+tx, tz     = Tile.key(*projection.project(*nominatim.geocode(address)))
+keys       = (-1..1).flat_map { |dx| (-1..1).map { |dz| [tx + dx, tz + dz] } }
+keys.each { |key| store.request(*key, 0) }
+keys.each { |key| store.wait(*key, 120) }
+start      = Start.new(store, projection, nominatim).locate(address)
+world      = World.new('limburg', slicer.world)
+world.start = start
+npcs       = Population.new(world).build
+puts "#{address} -> #{start['x']}, #{start['z']}; #{npcs.length} npcs"
+info       = -> { { 'name' => 'limburg', 'origin' => Limburg::ORIGIN, 'tileSize' => Tile::SIZE, 'tileVersion' => Tile::VERSION, 'step' => Tile::STEP, 'start' => start, 'zones' => slicer.zones } }
+tiles      = TileEndpoint.new(store, Static.new(root), info)
+Server.new(Integer(ARGV[0] || 8765), Game.new(world, npcs, Scores.new('data/scores.json')), root, tiles).run

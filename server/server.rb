@@ -1,10 +1,11 @@
 require 'socket'
 
 class Server
-  def initialize(port, game, root)
+  def initialize(port, game, root, tiles = nil)
     @port    = port
     @game    = game
     @static  = Static.new(root)
+    @tiles   = tiles
     @counter = 0
   end
 
@@ -20,12 +21,14 @@ class Server
 
   private
 
-  attr_reader :port, :game, :static
+  attr_reader :port, :game, :static, :tiles
 
   def handle(socket)
     request = HttpRequest.read(socket) or return socket.close
     if request.websocket?
       Client.new(@counter += 1, socket, request, game.inbox).run
+    elsif tiles && request.path.start_with?('/tiles/')
+      tiles.respond(socket, request)
     else
       static.respond(socket, request)
     end

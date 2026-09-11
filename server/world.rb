@@ -1,7 +1,8 @@
 require 'json'
 
 class World
-  attr_reader :name, :bounds, :start, :terrain, :buildings, :roads, :trees, :zones, :spots, :places, :grid
+  attr_reader :name, :bounds, :terrain, :buildings, :roads, :trees, :zones, :spots, :places, :grid
+  attr_accessor :start
 
   def self.load(name)
     new(name, JSON.parse(File.read("worlds/#{name}.json", encoding: 'UTF-8')))

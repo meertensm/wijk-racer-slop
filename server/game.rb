@@ -114,7 +114,7 @@ class Game
     client.player = player
     players[player.id] = player
     player.last_seen = now
-    client.send('welcome' => { 'id' => player.id, 'world' => world.name, 'kinds' => Npc::KINDS, 'npcs' => Population::CLASSES.transform_values(&:describe), 'score' => scores[player.name], 't' => now.round(2), 'poops' => poops.map(&:to_row) })
+    client.send('welcome' => { 'id' => player.id, 'world' => world.name, 'start' => world.start, 'origin' => Limburg::ORIGIN, 'tileSize' => Tile::SIZE, 'tileVersion' => Tile::VERSION, 'kinds' => Npc::KINDS, 'npcs' => Population::CLASSES.transform_values(&:describe), 'score' => scores[player.name], 't' => now.round(2), 'poops' => poops.map(&:to_row) })
   end
 
   def leave(client)
