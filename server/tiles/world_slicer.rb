@@ -27,6 +27,12 @@ class WorldSlicer
     }
   end
 
+  def covers?(tx, tz)
+    min_x, min_z, max_x, max_z = world['bounds']
+    x0, z0, x1, z1 = Tile.new(tx, tz).bounds
+    x0 >= min_x && x1 <= max_x && z0 >= min_z && z1 <= max_z
+  end
+
   def zones
     world.fetch('zones', []).map { |zone| { 'name' => zone['name'], 'kinds' => zone['kind'].split(','), 'p' => zone['p'] } }
   end

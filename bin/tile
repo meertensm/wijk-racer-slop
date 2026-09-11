@@ -1,0 +1,42 @@
+#!/usr/bin/env ruby
+$stdout.sync = true
+root = File.expand_path('..', __dir__)
+Dir.chdir(root)
+%w[geometry limburg tiles/projection tiles/tile tiles/nominatim tiles/boundary tiles/overpass tiles/ahn tiles/terrain tiles/scatter tiles/signs tiles/landmarks tiles/tile_builder tiles/tile_generator].each { |file| require "#{root}/server/#{file}" }
+
+seams = ARGV.delete('--seams')
+abort 'usage: bin/tile TX TZ [--seams]' unless ARGV.length == 2
+tx, tz     = ARGV.map(&:to_i)
+projection = Projection.new(*Limburg::ORIGIN)
+nominatim  = Nominatim.new('data/geo')
+generator  = TileGenerator.new(projection, Boundary.new(projection, nominatim.relation(Limburg::RELATION)), Overpass.new, Ahn.new)
+
+def report(generator, tx, tz)
+  started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  data    = generator.generate(tx, tz)
+  seconds = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).round(1)
+  if data['outside']
+    puts "tile #{tx},#{tz}: outside Limburg (#{seconds} s)"
+  else
+    heights = data['terrain']['heights']
+    puts "tile #{tx},#{tz}: #{data['buildings'].length} buildings, #{data['roads'].length} roads, #{data['areas'].length} areas, #{data['trees'].length} trees, " \
+         "#{data['places'].length} places, #{data['towns'].length} towns, heights #{heights.min}..#{heights.max} m, #{seconds} s"
+  end
+  data
+end
+
+tile = report(generator, tx, tz)
+exit unless seams && !tile['outside']
+east  = report(generator, tx + 1, tz)
+south = report(generator, tx, tz + 1)
+n     = Tile::SAMPLES
+if east['terrain']
+  diffs = (0...n).map { |r| (tile['terrain']['heights'][r * n + n - 1] - east['terrain']['heights'][r * n]).abs }
+  puts "east edge: max height difference #{diffs.max.round(3)} m"
+  shared = tile['roads'].map { |r| r['id'] } & east['roads'].map { |r| r['id'] }
+  puts "east edge: #{shared.length} shared roads, #{shared.count { |id| tile['roads'].find { |r| r['id'] == id } == east['roads'].find { |r| r['id'] == id } }} identical"
+end
+if south['terrain']
+  diffs = (0...n).map { |c| (tile['terrain']['heights'][(n - 1) * n + c] - south['terrain']['heights'][c]).abs }
+  puts "south edge: max height difference #{diffs.max.round(3)} m"
+end

@@ -5,7 +5,7 @@ class Projection
     @lat0    = lat0
     @lng0    = lng0
     @scale_x = 111_320 * Math.cos(lat0 * Math::PI / 180)
-    @scale_z = 110_540
+    @scale_z = 110_540.0
   end
 
   def project(lat, lon)
@@ -13,7 +13,7 @@ class Projection
   end
 
   def unproject(x, z)
-    [lat0 - z / scale_z, lng0 + x / scale_x]
+    [lat0 - z.to_f / scale_z, lng0 + x.to_f / scale_x]
   end
 
   def bbox(tile, margin = 0)

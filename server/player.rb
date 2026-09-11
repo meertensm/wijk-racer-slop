@@ -19,6 +19,10 @@ class Player
     dead_until.nil?
   end
 
+  def tile
+    Tile.key(car.x, car.z)
+  end
+
   def to_row(score)
     [id, name, car.x.round(2), car.z.round(2), car.heading.round(3), car.speed.round(1), score, alive? ? 0 : 1]
   end

@@ -71,6 +71,7 @@ class TileStore
   def generate(tx, tz)
     started = clock
     data    = generator.generate(tx, tz)
+    adopt_edges(tx, tz, data)
     File.write("#{path(tx, tz)}.tmp", JSON.generate(data))
     File.rename("#{path(tx, tz)}.tmp", path(tx, tz))
     ready << [tx, tz]
@@ -80,6 +81,16 @@ class TileStore
     failed[[tx, tz]] = clock
   ensure
     mutex.synchronize { pending.delete([tx, tz])&.broadcast }
+  end
+
+  def adopt_edges(tx, tz, data)
+    heights = data.dig('terrain', 'heights') or return
+    n = Tile::SAMPLES
+    { [1, 0] => ->(i) { [i * n + n - 1, i * n] }, [-1, 0] => ->(i) { [i * n, i * n + n - 1] },
+      [0, 1] => ->(i) { [(n - 1) * n + i, i] }, [0, -1] => ->(i) { [i, (n - 1) * n + i] } }.each do |(dx, dz), pair|
+      other = tile(tx + dx, tz + dz)&.data&.dig('terrain', 'heights') or next
+      n.times { |i| mine, theirs = pair.call(i); heights[mine] = other[theirs] }
+    end
   end
 
   def clock

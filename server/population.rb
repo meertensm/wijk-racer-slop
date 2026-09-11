@@ -4,47 +4,54 @@ class Population
     'tattooman'  => TattooMan, 'speakerboy' => Speakerboy, 'zwerver' => Zwerver, 'zombie'   => Zombie,
     'junkie'     => Junkie,    'labradoodle' => Labradoodle
   }
+  SPOTS_PER_TILE = 1000
 
-  def initialize(world, random = Random.new(7))
-    @world  = world
-    @random = random
-    @npcs   = []
+  def initialize(world, crowd)
+    @world = world
+    @crowd = crowd
   end
 
-  def build
-    chosen_spots.each { |x, z| spawn(kind_for(x, z), x, z, random.rand * Math::PI * 2) }
-    world.spots.each { |spot| spawn(spot.kind, spot.x, spot.z, spot.heading) }
-    npcs
+  def spawn(entry)
+    tile   = entry[:tile]
+    random = Random.new(tile.seed & 0x7fffffff)
+    ids    = tile.id_base
+    start  = world.start
+    spots  = entry[:roads].select(&:walkable?).flat_map { |road| road.sidewalk_spots(random) }
+                          .select { |x, z| tile.contains?(x, z) && !world.blocked?(x, z) && Math.hypot(x - start['x'], z - start['z']) > 30 }
+                          .shuffle(random: random).first(SPOTS_PER_TILE)
+    spots.each do |x, z|
+      klass = CLASSES.fetch(kind_for(x, z, random))
+      next if random.rand > klass::DENSITY
+      npc = klass.new(ids += 1, x, z, random.rand * Math::PI * 2, world, random)
+      entry[:npcs] << npc
+      crowd.add(npc)
+      next unless npc.is_a?(DogWalker)
+      npc.dog = Labradoodle.new(ids += 1, npc, world, random)
+      entry[:npcs] << npc.dog
+      crowd.add(npc.dog)
+    end
+    world.spots.select { |spot| tile.contains?(spot.x, spot.z) }.each_with_index do |spot, i|
+      npc = CLASSES.fetch(spot.kind).new(tile.id_base + 4000 + i, spot.x, spot.z, spot.heading, world, random)
+      entry[:npcs] << npc
+      crowd.add(npc)
+    end
+    entry[:npcs]
+  end
+
+  def despawn(entry)
+    entry[:npcs].each { |npc| crowd.remove(npc) }
+    entry[:npcs].clear
   end
 
   private
 
-  attr_reader :world, :random, :npcs
+  attr_reader :world, :crowd
 
-  def chosen_spots
-    start      = [world.start['x'], world.start['z']]
-    candidates = world.spawn_spots(random).shuffle(random: random).select { |x, z| Math.hypot(x - start[0], z - start[1]) > 30 && !world.blocked?(x, z) }
-    near, far  = candidates.partition { |x, z| Math.hypot(x - start[0], z - start[1]) < 600 }
-    chosen     = near.first(400) + far.first(600)
-    world.zones.each { |zone| chosen += candidates.select { |x, z| world.zone_of(x, z) == zone }.first(150) }
-    chosen.uniq
-  end
-
-  def kind_for(x, z)
+  def kind_for(x, z, random)
     zone = world.zone_of(x, z)
     kind = zone ? zone.kinds[(random.rand * zone.kinds.length).floor] : random.rand < 0.17 ? 'dogwalker' : 'beagle'
     kind = 'baldflag' if kind == 'baldman' && random.rand < 0.3
-    kind = 'beagle'   if kind == 'speakerboy' && npcs.any? { |npc| npc.is_a?(Speakerboy) && npc.distance_to(x, z) < 700 }
+    kind = 'beagle'   if kind == 'speakerboy' && crowd.near(x, z, 700).any?(Speakerboy)
     kind
-  end
-
-  def spawn(kind, x, z, heading)
-    klass = CLASSES.fetch(kind)
-    return if random.rand > klass::DENSITY
-    npc = klass.new(npcs.length, x, z, heading, world, random)
-    npcs << npc
-    return unless npc.is_a?(DogWalker)
-    npc.dog = Labradoodle.new(npcs.length, npc, world, random)
-    npcs << npc.dog
   end
 end

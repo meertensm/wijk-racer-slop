@@ -5,24 +5,29 @@ Dir.chdir(root)
 %w[
   geometry grid entity entities/structure entities/road entities/plant entities/vehicle entities/zone entities/spot entities/place entities/poop
   world voice npc npcs/humanoid_npc npcs/beagle npcs/labradoodle npcs/dog_walker npcs/bald_man npcs/zwerver npcs/junkie npcs/zombie npcs/speakerboy npcs/tattoo_man
-  population player scores game http_request static web_socket client server
+  population player scores game http_request static web_socket client server crowd zones tiles/prefetcher
   limburg tiles/projection tiles/tile tiles/tile_store tiles/world_slicer tiles/tile_endpoint tiles/nominatim start
+  tiles/boundary tiles/overpass tiles/ahn tiles/terrain tiles/scatter tiles/signs tiles/landmarks tiles/tile_builder tiles/tile_generator tiles/tile_source
 ].each { |file| require "#{root}/server/#{file}" }
 
 address    = ARGV[1] || Limburg::ADDRESS
 projection = Projection.new(*Limburg::ORIGIN)
 nominatim  = Nominatim.new('data/geo')
 slicer     = WorldSlicer.new('worlds/sittard-geleen.json')
-store      = TileStore.new("data/tiles/#{Tile::VERSION}", slicer)
+generator  = TileGenerator.new(projection, Boundary.new(projection, nominatim.relation(Limburg::RELATION)), Overpass.new, Ahn.new)
+store      = TileStore.new("data/tiles/#{Tile::VERSION}", TileSource.new(slicer, generator))
 tx, tz     = Tile.key(*projection.project(*nominatim.geocode(address)))
 keys       = (-1..1).flat_map { |dx| (-1..1).map { |dz| [tx + dx, tz + dz] } }
 keys.each { |key| store.request(*key, 0) }
 keys.each { |key| store.wait(*key, 120) }
 start      = Start.new(store, projection, nominatim).locate(address)
-world      = World.new('limburg', slicer.world)
+zones      = slicer.zones.each_with_index.map { |zone, i| Zone.new(i, zone['name'], zone['kinds'], zone['p']) }
+spots      = slicer.world.fetch('spots', []).each_with_index.map { |s, i| Spot.new(i, s['kind'], s['name'], s['x'], s['z'], s['heading']) }
+world      = World.new('limburg', projection, Zones.new(zones), spots)
 world.start = start
-npcs       = Population.new(world).build
-puts "#{address} -> #{start['x']}, #{start['z']}; #{npcs.length} npcs"
+game       = Game.new(world, store, Scores.new('data/scores.json'))
+game.warm(start['x'], start['z'])
+puts "#{address} -> #{start['x']}, #{start['z']}; #{game.crowd.size} npcs in #{world.tiles.size} tiles"
 info       = -> { { 'name' => 'limburg', 'origin' => Limburg::ORIGIN, 'tileSize' => Tile::SIZE, 'tileVersion' => Tile::VERSION, 'step' => Tile::STEP, 'start' => start, 'zones' => slicer.zones } }
 tiles      = TileEndpoint.new(store, Static.new(root), info)
-Server.new(Integer(ARGV[0] || 8765), Game.new(world, npcs, Scores.new('data/scores.json')), root, tiles).run
+Server.new(Integer(ARGV[0] || 8765), game, root, tiles).run

@@ -1,21 +1,30 @@
 class Game
-  TICK, NET, RANGE, DROP, ACTIVE = 0.05, 0.1, 600, 660, 700
-  attr_reader :inbox, :now, :world, :npcs
+  TICK, NET, RANGE, DROP, ACTIVE, INTEREST, KEEP = 0.05, 0.1, 600, 660, 700, 1, 2
+  attr_reader :inbox, :now, :world, :crowd, :store
 
-  def initialize(world, npcs, scores)
-    @world   = world
-    @npcs    = npcs
-    @scores  = scores
-    @inbox   = Thread::Queue.new
-    @players = {}
-    @poops   = []
-    @events  = []
-    @now     = 0.0
-    @net     = 0.0
+  def initialize(world, store, scores)
+    @world      = world
+    @store      = store
+    @scores     = scores
+    @crowd      = Crowd.new
+    @population = Population.new(world, crowd)
+    @prefetcher = Prefetcher.new(store)
+    @inbox      = Thread::Queue.new
+    @players    = {}
+    @poops      = []
+    @events     = []
+    @now        = 0.0
+    @net        = 0.0
+    @interest   = 0.0
   end
 
   def start
     Thread.new { run }
+  end
+
+  def warm(x, z)
+    tx, tz = Tile.key(x, z)
+    (-INTEREST..INTEREST).each { |dx| (-INTEREST..INTEREST).each { |dz| load_tile([tx + dx, tz + dz]) } }
   end
 
   def nearest_player(x, z, radius)
@@ -59,7 +68,7 @@ class Game
 
   private
 
-  attr_reader :scores, :players, :poops, :events
+  attr_reader :scores, :players, :poops, :events, :population, :prefetcher
 
   def run
     last = clock
@@ -78,7 +87,14 @@ class Game
 
   def step(dt)
     handle(*inbox.pop) until inbox.empty?
-    npcs.each { |npc| npc.tick(dt, self) if active?(npc) }
+    @interest -= dt
+    if @interest <= 0
+      @interest = 0.5
+      interest
+    end
+    active = {}
+    players.each_value { |player| crowd.near(player.car.x, player.car.z, ACTIVE).each { |npc| active[npc.id] = npc } }
+    active.each_value { |npc| npc.tick(dt, self); crowd.settle(npc) }
     respawn_players
     players.values.each { |player| leave(player.client) && player.client.close if now - player.last_seen > 10 }
     scores.flush(now)
@@ -87,6 +103,27 @@ class Game
     @net = 0.0
     players.each_value { |player| snapshot(player) }
     events.clear
+  end
+
+  def interest
+    wanted = {}
+    players.each_value do |player|
+      tx, tz = player.tile
+      (-INTEREST..INTEREST).each { |dx| (-INTEREST..INTEREST).each { |dz| wanted[[tx + dx, tz + dz]] = true } }
+    end
+    wanted.each_key { |key| load_tile(key) unless world.loaded?(key) }
+    world.tiles.keys.each do |key|
+      next if players.each_value.any? { |player| (key[0] - player.tile[0]).abs <= KEEP && (key[1] - player.tile[1]).abs <= KEEP }
+      population.despawn(world.unload(key))
+    end
+    prefetcher.update(players.values)
+  end
+
+  def load_tile(key)
+    return if world.loaded?(key)
+    tile = store.tile(*key)
+    return store.request(*key, 1) unless tile
+    population.spawn(world.load(tile))
   end
 
   def handle(client, message)
@@ -123,14 +160,15 @@ class Game
 
   def move_player(player, x, z, heading, speed)
     return unless [x, z, heading, speed].all? { |value| value.is_a?(Numeric) && value.to_f.finite? }
-    from = [player.car.x, player.car.z]
-    player.car.move(*world.clamp(x, z), heading, speed)
     player.last_seen = now
+    return unless world.inside?(x, z)
+    from = [player.car.x, player.car.z]
+    player.car.move(x.to_f, z.to_f, heading, speed)
     return if !player.alive? || Math.hypot(x - from[0], z - from[1]) > 30
     poops.reject! { |poop| poop.near?(player.car.x, player.car.z, 1.4) && events << ['unpoop', poop.id, player.id] }
-    npcs.each do |npc|
+    crowd.near(x, z, 40).each do |npc|
       npc.combo(player, self) if npc.dead && npc.is_a?(DogWalker) && npc.near?(x, z, 10)
-      next if npc.dead || !npc.near?(x, z, 40)
+      next if npc.dead
       next if Geometry.segment_distance(npc.x, npc.z, from[0], from[1], player.car.x, player.car.z) > 2.2
       npc.hit_by(player, self)
       break unless player.alive?
@@ -142,26 +180,19 @@ class Game
       next unless player.dead_until && now >= player.dead_until
       player.dead_until = nil
       heading = player.car.heading + Math::PI / 2
-      npcs.each { |npc| npc.push(Math.sin(heading) * 12, Math.cos(heading) * 12) if !npc.dead && npc.near?(player.car.x, player.car.z, 6) }
+      crowd.near(player.car.x, player.car.z, 6).each { |npc| next if npc.dead; npc.push(Math.sin(heading) * 12, Math.cos(heading) * 12); crowd.settle(npc) }
       events << ['respawn', player.id]
     end
   end
 
-  def active?(npc)
-    players.each_value.any? { |player| player.car.near?(npc.x, npc.z, ACTIVE) }
-  end
-
   def snapshot(player)
-    rows, gone = [], []
-    npcs.each do |npc|
-      if player.car.near?(npc.x, npc.z, RANGE)
-        rows << npc.to_row if player.known[npc.id] != npc.version
-        player.known[npc.id] = npc.version
-      elsif player.known.key?(npc.id) && !player.car.near?(npc.x, npc.z, DROP)
-        gone << npc.id
-        player.known.delete(npc.id)
-      end
+    rows = []
+    crowd.near(player.car.x, player.car.z, RANGE).each do |npc|
+      rows << npc.to_row if player.known[npc.id] != npc.version
+      player.known[npc.id] = npc.version
     end
+    gone = player.known.keys.select { |id| (npc = crowd[id]).nil? || !player.car.near?(npc.x, npc.z, DROP) }
+    gone.each { |id| player.known.delete(id) }
     frame = { 't' => now.round(2), 'players' => players.each_value.map { |other| other.to_row(scores[other.name]) } }
     frame['npcs']   = rows   unless rows.empty?
     frame['gone']   = gone   unless gone.empty?

@@ -86,11 +86,12 @@ class Npc < Entity
     return if speed.zero?
     nx = x + Math.sin(heading) * speed * dt
     nz = z + Math.cos(heading) * speed * dt
-    if world.blocked?(nx, nz)
+    if world.blocked?(nx, nz) || !world.inside?(nx, nz)
       @heading += Math::PI
       touch
     else
-      @x, @z = world.clamp(nx, nz)
+      @x = nx
+      @z = nz
     end
   end
 
