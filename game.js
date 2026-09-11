@@ -1546,7 +1546,7 @@ function prepareBuilding(building) {
   building.h = +Math.max(3.2, building.h + ((seed % 1) - 0.5) * 1.2).toFixed(1)
   if (building.roof === 'hip' && Math.abs(seed) % 5 === 0) building.roof = 'flat'
   else if (building.roof === 'flat' && building.h <= 8 && Math.abs(seed) % 7 === 0) building.roof = 'hip'
-  if (building.roof === 'hip' && !boxy(building.p)) building.roof = 'flat'
+  if (building.roof === 'hip' && !building.faces && !boxy(building.p)) building.roof = 'flat'
   building.bottom = Math.min(...heights) - 0.5
   building.plaster = Math.abs(Math.floor(seed / 3)) % 4 === 0
   building.group = building.plaster ? 'plaster' : ['brickRed', 'brickRed', 'brickBrown', 'brickYellow'][Math.abs(Math.floor(seed / 5)) % 4]
@@ -1555,6 +1555,11 @@ function prepareBuilding(building) {
 
 function buildBuilding(building, groups) {
   const shape = new THREE.Shape(building.p.map(([x, z]) => new THREE.Vector2(x, -z)))
+  if (building.faces) {
+    bagBuilding(building, groups)
+    groups[building.group].push(paint(new THREE.ExtrudeGeometry(shape, { depth: building.base - building.bottom + 0.3, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, building.bottom, 0), building.wall))
+    return facadeDetails(building, groups, false)
+  }
   const walls = new THREE.ExtrudeGeometry(shape, { depth: building.base + building.h - building.bottom, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, building.bottom, 0)
   groups[building.group].push(paint(walls, building.wall))
   if (building.roof === 'hip') hipRoof(building, groups)
@@ -1562,12 +1567,43 @@ function buildBuilding(building, groups) {
   facadeDetails(building, groups, false)
 }
 
+function bagBuilding(building, groups) {
+  const lift = building.base - (building.ground ?? building.base)
+  const roofColor = building.roof === 'hip' ? COLORS.roofs[building.c] : COLORS.bitumen
+  building.faces.forEach(([type, outer, ...holes]) => {
+    const rings = [outer, ...holes].map(ring => ring.map(([x, z, y]) => new THREE.Vector3(x, y + lift, z)))
+    const normal = new THREE.Vector3()
+    for (let i = 0; i < rings[0].length; i++) { const a = rings[0][i], b = rings[0][(i + 1) % rings[0].length]; normal.x += (a.y - b.y) * (a.z + b.z); normal.y += (a.z - b.z) * (a.x + b.x); normal.z += (a.x - b.x) * (a.y + b.y) }
+    if (normal.lengthSq() < 1e-6) return
+    normal.normalize()
+    const u = Math.abs(normal.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0).cross(normal).normalize()
+    const v = new THREE.Vector3().crossVectors(normal, u)
+    const flat = rings.map(ring => ring.map(p => new THREE.Vector2(p.dot(u), p.dot(v))))
+    if (THREE.ShapeUtils.isClockWise(flat[0])) { flat.forEach(ring => ring.reverse()); rings.forEach(ring => ring.reverse()) }
+    const triangles = THREE.ShapeUtils.triangulateShape(flat[0], flat.slice(1))
+    const points = rings.flat()
+    const positions = [], uvs = []
+    triangles.forEach(([a, b, c]) => {
+      const tri = [points[a], points[b], points[c]]
+      const facing = new THREE.Vector3().crossVectors(tri[1].clone().sub(tri[0]), tri[2].clone().sub(tri[0]))
+      if (facing.dot(normal) < 0) tri.reverse()
+      tri.forEach(p => { positions.push(p.x, p.y, p.z); uvs.push(type === 'wall' ? p.dot(u) : p.x, type === 'wall' ? p.y : p.z) })
+    })
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+    geometry.computeVertexNormals()
+    if (type === 'wall') groups[building.group].push(paint(geometry, building.wall))
+    else groups[building.roof === 'hip' ? 'tiles' : 'plain'].push(paint(geometry, roofColor))
+  })
+}
+
 function buildingExtras(building, groups) {
   const plinth = new THREE.Shape(offsetRing(building.p, 0.06).map(([x, z]) => new THREE.Vector2(x, -z)))
   groups.plain.push(paint(new THREE.ExtrudeGeometry(plinth, { depth: building.base - building.bottom + 0.45, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, building.bottom, 0), COLORS.plinth))
   gutters(building, boxes(groups, 'plain'))
   if (building.roofFrame) roofExtras(building, groups)
-  else if (footprintArea(building.p) > 60) {
+  else if (!building.faces && footprintArea(building.p) > 60) {
     const [cx, cz] = centroid(building.p)
     boxInto(boxes(groups, 'plain'), 1.4, 0.9, 1.1, 0, cx, building.base + building.h + 0.45, cz, COLORS.concrete)
   }

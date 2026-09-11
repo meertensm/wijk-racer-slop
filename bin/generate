@@ -2,7 +2,7 @@
 $stdout.sync = true
 root = File.expand_path('..', __dir__)
 Dir.chdir(root)
-%w[geometry limburg tiles/projection tiles/tile tiles/tile_store tiles/nominatim tiles/boundary tiles/overpass tiles/ahn tiles/terrain tiles/scatter tiles/signs tiles/landmarks tiles/tile_builder tiles/tile_generator].each { |file| require "#{root}/server/#{file}" }
+%w[geometry limburg tiles/projection tiles/tile tiles/tile_store tiles/nominatim tiles/rd tiles/bag3d tiles/boundary tiles/overpass tiles/ahn tiles/terrain tiles/scatter tiles/signs tiles/landmarks tiles/tile_builder tiles/tile_generator].each { |file| require "#{root}/server/#{file}" }
 
 address, radius = ARGV
 abort 'usage: bin/generate "ADRES" STRAAL_KM' unless radius

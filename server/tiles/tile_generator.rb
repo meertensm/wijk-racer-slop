@@ -1,18 +1,20 @@
 class TileGenerator
-  def initialize(projection, boundary, overpass, ahn)
+  def initialize(projection, boundary, overpass, ahn, bag3d = Bag3d.new(projection))
     @projection = projection
     @boundary   = boundary
     @overpass   = overpass
     @ahn        = ahn
+    @bag3d      = bag3d
   end
 
   def generate(tx, tz)
     tile = Tile.new(tx, tz)
     return { 'v' => Tile::VERSION, 'tx' => tx, 'tz' => tz, 'outside' => true } unless boundary.inside?(*tile.center)
-    heights  = Thread.new { ahn.heights(projection.bbox(tile, Tile::STEP / 2.0), Tile::SAMPLES) }
-    elements = overpass.fetch(query(tile))
-    { 'v' => Tile::VERSION, 'tx' => tx, 'tz' => tz, 'outside' => false, 'terrain' => Terrain.new(tile, heights.value).to_h }
-      .merge(TileBuilder.new(projection, tile).build(elements))
+heights  = Thread.new { ahn.heights(projection.bbox(tile, Tile::STEP / 2.0), Tile::SAMPLES) }
+pands    = Thread.new { bag3d.pands(tile) rescue (warn "3dbag #{tx},#{tz}: #{$!.message}"; []) }
+elements = overpass.fetch(query(tile))
+{ 'v' => Tile::VERSION, 'tx' => tx, 'tz' => tz, 'outside' => false, 'terrain' => Terrain.new(tile, heights.value).to_h }
+  .merge(TileBuilder.new(projection, tile).build(elements, pands.value))
   end
 
   def query(tile)
@@ -51,5 +53,5 @@ class TileGenerator
 
   private
 
-  attr_reader :projection, :boundary, :overpass, :ahn
+  attr_reader :projection, :boundary, :overpass, :ahn, :bag3d
 end

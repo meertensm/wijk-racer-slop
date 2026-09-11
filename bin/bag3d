@@ -1,0 +1,23 @@
+#!/usr/bin/env ruby
+$stdout.sync = true
+root = File.expand_path('..', __dir__)
+Dir.chdir(root)
+require 'json'
+%w[geometry limburg tiles/projection tiles/tile tiles/rd tiles/bag3d tiles/signs tiles/scatter tiles/landmarks tiles/tile_builder].each { |file| require "#{root}/server/#{file}" }
+abort 'usage: bin/bag3d TX TZ | bin/bag3d --all' unless ARGV.length == 2 || ARGV == ['--all']
+projection = Projection.new(*Limburg::ORIGIN)
+bag3d      = Bag3d.new(projection)
+files      = ARGV == ['--all'] ? Dir.glob("data/tiles/#{Tile::VERSION}/*.json").sort : ["data/tiles/#{Tile::VERSION}/#{ARGV[0]}_#{ARGV[1]}.json"]
+files.each do |file|
+  data = JSON.parse(File.read(file, encoding: 'UTF-8'))
+  next if data['outside']
+  tx, tz  = data['tx'], data['tz']
+  started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  pands   = bag3d.pands(Tile.new(tx, tz))
+  osm     = data['buildings'].reject { |b| b['faces'] }
+  data['buildings'] = TileBuilder.merge_pands(osm, pands)
+  File.write(file, JSON.generate(data))
+  puts "tile #{tx},#{tz}: #{pands.length} pands, #{data['buildings'].count { |b| b['faces'] }} with faces, #{data['buildings'].length} buildings, #{File.size(file) / 1024} KB, #{(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).round(1)} s"
+rescue StandardError => error
+  warn "tile #{file}: #{error.class}: #{error.message[0, 120]}"
+end

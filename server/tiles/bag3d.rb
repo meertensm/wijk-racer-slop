@@ -29,11 +29,15 @@ class Bag3d
 
   attr_reader :projection
 
-  def fetch(url)
+  def fetch(url, attempt = 1)
     uri      = URI(url)
     response = Net::HTTP.start(uri.host, uri.port, use_ssl: true, open_timeout: 15, read_timeout: 60) { |http| http.get(uri.request_uri, 'User-Agent' => 'wijk-racer/0.2', 'Accept' => 'application/city+json') }
     raise "3dbag #{response.code}" unless response.is_a?(Net::HTTPSuccess)
     JSON.parse(response.body)
+  rescue SystemCallError, Net::OpenTimeout, Net::ReadTimeout, RuntimeError => error
+    raise if attempt >= 3
+    sleep [2, 6][attempt - 1]
+    fetch(url, attempt + 1)
   end
 
   def convert(feature, transform, tile)

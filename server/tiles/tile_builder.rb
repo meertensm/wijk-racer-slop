@@ -15,7 +15,7 @@ class TileBuilder
     @landmarks  = Landmarks.new(projection, tile)
   end
 
-  def build(elements)
+  def build(elements, pands = [])
     buildings, roads, areas, trees, pois = [], [], [], [], []
     elements.each do |element|
       tags = element['tags'] || {}
@@ -54,11 +54,31 @@ class TileBuilder
         trees.concat Scatter.trees(points, element['id'], kind, tile)
       end
     end
+    buildings = TileBuilder.merge_pands(buildings, pands)
     Signs.attach(buildings, pois)
     towns = landmarks.towns(elements)
     x0, z0, x1, z1 = tile.bounds
     { 'buildings' => buildings, 'roads' => roads, 'areas' => areas, 'trees' => trees,
       'places' => landmarks.places(elements, towns), 'towns' => towns.select { |town| tile.contains?(town['x'], town['z']) } }
+  end
+
+  def self.merge_pands(buildings, pands)
+    return buildings if pands.empty?
+    taken = []
+    merged = pands.map do |pand|
+      match = buildings.find { |building| !taken.include?(building) && Geometry.inside?(pand['p'], *TileBuilder.middle(building['p'])) }
+      taken << match if match
+      { 'id' => pand['id'], 'p' => pand['p'].map { |x, z| [x.round(1), z.round(1)] }, 'h' => [pand['h'], 2.5].max, 'c' => pand['id'] % 6,
+        'roof' => pand['roof'] == 'slanted' ? 'hip' : 'flat', 'ground' => pand['ground'],
+        'faces' => pand['faces'].map { |type, *rings| [type, *rings.map { |ring| ring.map { |x, z, y| [x.round(2), z.round(2), y.round(2)] } }] },
+        'sign' => match && match['sign'] }.compact
+    end
+    merged + buildings.reject { |building| taken.include?(building) }
+  end
+
+  def self.middle(points)
+    xs, zs = points.transpose
+    [(xs.min + xs.max) / 2.0, (zs.min + zs.max) / 2.0]
   end
 
   private

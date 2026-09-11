@@ -2,7 +2,7 @@
 $stdout.sync = true
 root = File.expand_path('..', __dir__)
 Dir.chdir(root)
-%w[geometry limburg tiles/projection tiles/tile tiles/nominatim tiles/boundary tiles/overpass tiles/ahn tiles/terrain tiles/scatter tiles/signs tiles/landmarks tiles/tile_builder tiles/tile_generator].each { |file| require "#{root}/server/#{file}" }
+%w[geometry limburg tiles/projection tiles/tile tiles/nominatim tiles/rd tiles/bag3d tiles/boundary tiles/overpass tiles/ahn tiles/terrain tiles/scatter tiles/signs tiles/landmarks tiles/tile_builder tiles/tile_generator].each { |file| require "#{root}/server/#{file}" }
 
 seams = ARGV.delete('--seams')
 abort 'usage: bin/tile TX TZ [--seams]' unless ARGV.length == 2
