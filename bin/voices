@@ -4,7 +4,7 @@ require 'net/http'
 
 root = File.expand_path('..', __dir__)
 %w[geometry grid entity entities/structure entities/road entities/plant entities/vehicle entities/zone entities/spot entities/place entities/poop
-   world voice npc npcs/humanoid_npc npcs/beagle npcs/labradoodle npcs/dog_walker npcs/bald_man npcs/zwerver npcs/junkie npcs/zombie npcs/speakerboy npcs/tattoo_man
+   world voice npc npcs/humanoid_npc npcs/beagle npcs/labradoodle npcs/dog_walker npcs/bald_man npcs/zwerver npcs/junkie npcs/zombie npcs/speakerboy npcs/tattoo_man npcs/politie
    population].each { |file| require "#{root}/server/#{file}" }
 
 key    = ENV.fetch('AZURE_SPEECH_KEY') { abort 'Set AZURE_SPEECH_KEY (and optionally AZURE_SPEECH_REGION, default westeurope)' }

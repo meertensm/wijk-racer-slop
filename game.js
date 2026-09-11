@@ -72,8 +72,8 @@ const COLORS = {
   plaster:    [0xf3efe4, 0xe9e2d0, 0xd8d3c4, 0xf7f4ee, 0xe4d9c4, 0xcfd6cf].map(hex => new THREE.Color(hex)),
   plinth:     new THREE.Color(0x4f4a45),
   gutter:     new THREE.Color(0x50555c),
-  road:       new THREE.Color(0x585b62),
-  wear:       new THREE.Color(0x4d5057),
+  road:       new THREE.Color(0x56575b),
+  wear:       new THREE.Color(0x494a4e),
   sidewalk:   new THREE.Color(0xa9a59c),
   curb:       new THREE.Color(0xc4c1b8),
   dash:       new THREE.Color(0xe8e8e0),
@@ -107,14 +107,17 @@ const renderer = new THREE.WebGLRenderer({ antialias: true })
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5))
 renderer.setSize(innerWidth, innerHeight)
 renderer.shadowMap.enabled = true
-renderer.shadowMap.type = THREE.PCFShadowMap
+renderer.shadowMap.type = THREE.PCFSoftShadowMap
+renderer.toneMapping = THREE.NeutralToneMapping
+renderer.toneMappingExposure = 1.15
 document.body.prepend(renderer.domElement)
-const effect = new OutlineEffect(renderer, { defaultThickness: 0.0022, defaultColor: [0.12, 0.08, 0.1] })
+const effect = new OutlineEffect(renderer, { defaultThickness: 0.0016, defaultColor: [0.12, 0.08, 0.1] })
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x8fbf70, 1.0))
-const sun = new THREE.DirectionalLight(0xfff4e0, 1.6)
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8fbf70, 0.65))
+const sun = new THREE.DirectionalLight(0xfff4e0, 2.3)
 sun.castShadow = true
 sun.shadow.mapSize.set(4096, 4096)
+sun.shadow.radius = 3
 sun.shadow.camera.left = sun.shadow.camera.bottom = -220
 sun.shadow.camera.right = sun.shadow.camera.top = 220
 sun.shadow.camera.near = 1
@@ -122,9 +125,28 @@ sun.shadow.camera.far = 900
 sun.shadow.bias = -0.0006
 scene.add(sun, sun.target)
 
-const gradient = new THREE.DataTexture(new Uint8Array([110, 110, 110, 255, 185, 185, 185, 255, 255, 255, 255, 255]), 3, 1)
-gradient.minFilter = gradient.magFilter = THREE.NearestFilter
-gradient.needsUpdate = true
+function environment() {
+  const world = new THREE.Scene()
+  const dome = new THREE.SphereGeometry(50, 32, 16)
+  const colors = new Float32Array(dome.attributes.position.count * 3), color = new THREE.Color()
+  for (let i = 0; i < dome.attributes.position.count; i++) {
+    const y = dome.attributes.position.getY(i) / 50
+    color.copy(COLORS.horizon).lerp(COLORS.zenith, Math.sqrt(Math.max(0, y)))
+    if (y < 0) color.set(0x6f8f55).lerp(new THREE.Color(0x4a5a3a), -y)
+    colors.set([color.r, color.g, color.b], i * 3)
+  }
+  dome.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  world.add(new THREE.Mesh(dome, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide })))
+  const glare = new THREE.Mesh(new THREE.SphereGeometry(4, 16, 8), new THREE.MeshBasicMaterial({ color: 0xfff6e0 }))
+  glare.position.set(18, 30, 12)
+  world.add(glare)
+  const pmrem = new THREE.PMREMGenerator(renderer)
+  const texture = pmrem.fromScene(world, 0.02).texture
+  pmrem.dispose()
+  return texture
+}
+scene.environment = environment()
+scene.environmentIntensity = 0.75
 // POOP INFECTION:
 
 const POOP_SLOTS = 48
@@ -161,8 +183,11 @@ function infectable(material) {
   return material
 }
 
-const toon = infectable(new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: gradient, side: THREE.DoubleSide }))
-const solid = (color, map) => infectable(new THREE.MeshToonMaterial({ color, gradientMap: gradient, ...(map && { map }) }))
+const toon = infectable(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, envMapIntensity: 0.35, side: THREE.DoubleSide }))
+const solid = (color, map) => infectable(new THREE.MeshStandardMaterial({ color, roughness: 0.6, envMapIntensity: 0.5, ...(map && { map }) }))
+const carPaint = color => infectable(new THREE.MeshPhysicalMaterial({ color, metalness: 0.35, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.06, envMapIntensity: 1.3 }))
+const carGlass = new THREE.MeshPhysicalMaterial({ color: 0x1c2b3a, metalness: 0.6, roughness: 0.05, envMapIntensity: 1.8 })
+const chrome = new THREE.MeshStandardMaterial({ color: 0xe0e0e0, metalness: 1, roughness: 0.14, envMapIntensity: 1.8 })
 
 // TEXTURES:
 
@@ -411,7 +436,7 @@ function windowAtlas() {
 }
 TEXTURES.window = windowAtlas()
 
-const textured = map => infectable(new THREE.MeshToonMaterial({ map, vertexColors: true, gradientMap: gradient, side: THREE.DoubleSide }))
+const textured = map => infectable(new THREE.MeshStandardMaterial({ map, vertexColors: true, roughness: 0.9, envMapIntensity: 0.3, side: THREE.DoubleSide }))
 const MATERIALS = { plain: toon, asphalt: textured(TEXTURES.asphalt), paving: textured(TEXTURES.paving), gravel: textured(TEXTURES.gravel), plaster: textured(TEXTURES.plaster), hedge: textured(TEXTURES.foliage), brickRed: textured(TEXTURES.brickRed), brickBrown: textured(TEXTURES.brickBrown), brickYellow: textured(TEXTURES.brickYellow), tiles: textured(TEXTURES.tiles), ground: textured(TEXTURES.grass), window: textured(TEXTURES.window) }
 MATERIALS.window.map.wrapS = MATERIALS.window.map.wrapT = THREE.ClampToEdgeWrapping
 MATERIALS.window.map.repeat.set(1, 1)
@@ -484,7 +509,11 @@ function releaseSigns(tile) {
   signSlots.forEach(slot => slot.holders.delete(tile.key))
 }
 
-MATERIALS.sign = infectable(new THREE.MeshToonMaterial({ map: signMap, gradientMap: gradient, side: THREE.DoubleSide }))
+MATERIALS.sign = infectable(new THREE.MeshStandardMaterial({ map: signMap, roughness: 0.5, side: THREE.DoubleSide }))
+MATERIALS.asphalt.roughness = 0.72
+MATERIALS.window.roughness = 0.18
+MATERIALS.window.metalness = 0.55
+MATERIALS.window.envMapIntensity = 1.4
 MATERIALS.sign.userData.outlineParameters = { visible: false }
 
 function signQuad(sign, cx, cz, ux, uz, nx, nz, width, bottom, height) {
@@ -709,31 +738,43 @@ function markDual(road, candidates) {
   if (road.dual) road.w = road.w >= 10 ? 9 : 5.5
 }
 
+function loadedHeights(points) {
+  const loaded = points.map(([x, z]) => tileAt(x, z)?.raw ? terrainHeight(x, z) : null)
+  const known = loaded.map((h, i) => h === null ? null : i).filter(i => i !== null)
+  const fill = i => known.length ? loaded[known.reduce((best, k) => Math.abs(k - i) < Math.abs(best - i) ? k : best, known[0])] : lastHeight
+  return { heights: loaded.map((h, i) => h === null ? fill(i) : h), partial: known.length < points.length }
+}
+
 function prepareRoad(road, bigWater) {
   const key = ([x, z]) => `${x},${z}`
-  road.hs = road.p.map(([x, z]) => terrainHeight(x, z))
+  if (road.segments) road.segments.forEach(segment => segmentGrid.get(cellKey((segment.a[0] + segment.b[0]) / 2, (segment.a[1] + segment.b[1]) / 2))?.delete(segment))
+  const known = loadedHeights(road.p)
+  road.partial = known.partial
+  road.hs = known.heights
   if (road.kind === 'water') {
     road.hs = road.p.map(([x, z], i) => road.level === undefined || Math.abs(road.level + 0.2 - road.hs[i]) > 3 ? road.hs[i] + 0.04 : road.level + 0.2)
   } else if (road.bridge) {
     const [mx, mz] = road.p[Math.floor(road.p.length / 2)]
-    const waterLevel = Math.max(-Infinity, ...bigWater.filter(water => polylineDistance(mx, mz, water.p) < water.w).map(water => water.level + 7))
+    const ends = Math.max(road.hs[0], road.hs[road.hs.length - 1])
+    const waterLevel = Math.min(ends + 8, Math.max(-Infinity, ...bigWater.filter(water => polylineDistance(mx, mz, water.p) < water.w).map(water => water.level + 7)))
     const along = road.p.map((p, i) => i ? Math.hypot(p[0] - road.p[i - 1][0], p[1] - road.p[i - 1][1]) : 0).map((d, i, all) => all.slice(0, i + 1).reduce((a, b) => a + b, 0))
     const total = along[along.length - 1] || 1, h0 = road.hs[0], h1 = road.hs[road.hs.length - 1]
     road.hs = road.p.map((p, i) => Math.max(h0 + (h1 - h0) * along[i] / total, waterLevel))
-    road.p.forEach((p, i) => elevatedAt.set(key(p), Math.max(elevatedAt.get(key(p)) || 0, road.hs[i])))
+    road.p.forEach((p, i) => elevatedAt.set(key(p), road.hs[i]))
   } else {
     road.p.forEach((p, i) => { if (elevatedAt.has(key(p))) road.hs[i] = Math.max(road.hs[i], elevatedAt.get(key(p))) })
     const span = i => Math.hypot(road.p[i][0] - road.p[i - 1][0], road.p[i][1] - road.p[i - 1][1])
     for (let i = 1; i < road.p.length; i++) road.hs[i] = Math.max(road.hs[i], road.hs[i - 1] - GRADE * span(i))
     for (let i = road.p.length - 2; i >= 0; i--) road.hs[i] = Math.max(road.hs[i], road.hs[i + 1] - GRADE * span(i + 1))
+    road.hs = road.hs.map((h, i) => Math.min(h, known.heights[i] + 9))
   }
-  road.ground = road.p.map(([x, z]) => terrainHeight(x, z))
+  road.ground = loadedHeights(road.p).heights
   road.elevated = road.hs.some((h, i) => h > road.ground[i] + 0.4)
   const lifted = (y, ground) => road.kind === 'water' || road.bridge || (road.elevated && y > ground + 0.4)
   road.nodes = road.p.map(([x, z], i) => [x, z, lifted(road.hs[i], road.ground[i]) ? road.hs[i] : road.ground[i], lifted(road.hs[i], road.ground[i])])
   const curve = new THREE.CatmullRomCurve3(road.p.map(([x, z], i) => new THREE.Vector3(x, road.hs[i], z)), false, 'centripetal')
   road.samples = curve.getSpacedPoints(Math.max(1, Math.ceil(curve.getLength() / 4))).map(({ x, y, z }) => {
-    const ground = terrainHeight(x, z)
+    const ground = tileAt(x, z)?.raw ? terrainHeight(x, z) : y
     if (road.kind === 'water' || road.bridge) return [x, z, y, true]
     const level = Math.max(y, ground)
     return lifted(level, ground) ? [x, z, level, true] : [x, z, ground, false]
@@ -1798,9 +1839,9 @@ function prepareStep(tile) {
   let queue = null
   return () => {
     if (!queue) {
-      const wide = roadsAround(tile).filter(road => road.kind === 'road' && road.w >= 7 && !road.prepared)
-      tile.roads.filter(road => wide.includes(road)).forEach(road => markDual(road, wide))
-      queue = tile.roads.filter(road => !road.prepared).sort((a, b) => (b.bridge ? 1 : 0) - (a.bridge ? 1 : 0))
+      const wide = roadsAround(tile).filter(road => road.kind === 'road' && road.w >= 7)
+      tile.roads.filter(road => wide.includes(road) && !road.prepared).forEach(road => markDual(road, wide))
+      queue = tile.roads.filter(road => !road.prepared || road.partial).sort((a, b) => (b.bridge ? 1 : 0) - (a.bridge ? 1 : 0))
     }
     const bigWater = [...roadsById.values()].filter(road => road.level !== undefined)
     for (let n = 0; n < 40 && queue.length; n++) prepareRoad(queue.shift(), bigWater)
@@ -2075,19 +2116,21 @@ function buildTrains(tile) {
 }
 
 function pandaParts(part, body, glass = 0x1f2a36, plastic = 0x2e2e2e, lights = null) {
-  const roof = new THREE.Color(body).offsetHSL(0, 0, -0.03).getHex(), frame = 0x1a1a1a, chrome = 0xd8d8d8
-  const shell = [part(1.46, 0.46, 3.3, body, 0, 0.63, 0), part(1.38, 0.54, 2.2, body, 0, 1.13, -0.42)]
-  part(1.42, 0.03, 1.55, roof, 0, 1.415, -0.4)
-  part(1.44, 0.22, 0.98, body, 0, 0.79, 1.14)
-  part(1.42, 0.02, 0.9, roof, 0, 0.905, 1.16)
+  const roof = new THREE.Color(body).offsetHSL(0, 0, -0.03).getHex(), frame = 0x1a1a1a, chromeColor = 0xd8d8d8
+  const finish = (mesh, material) => { mesh.material = material; return mesh }
+  const paintPart = (...args) => finish(part(...args), carPaint(args[3]))
+  const shell = [paintPart(1.46, 0.46, 3.3, body, 0, 0.63, 0), paintPart(1.38, 0.54, 2.2, body, 0, 1.13, -0.42)]
+  paintPart(1.42, 0.03, 1.55, roof, 0, 1.415, -0.4)
+  paintPart(1.44, 0.22, 0.98, body, 0, 0.79, 1.14)
+  paintPart(1.42, 0.02, 0.9, roof, 0, 0.905, 1.16)
   part(1.5, 0.18, 3.44, plastic, 0, 0.4, 0)
   part(1.52, 0.16, 0.16, plastic, 0, 0.47, 1.72)
   part(1.52, 0.16, 0.16, plastic, 0, 0.47, -1.72)
   part(1.54, 0.03, 0.17, 0x111111, 0, 0.5, 1.73)
   part(1.54, 0.03, 0.17, 0x111111, 0, 0.5, -1.73)
   part(0.76, 0.2, 0.04, frame, 0, 0.78, 1.665)
-  for (let k = 0; k < 4; k++) part(0.7, 0.012, 0.045, chrome, 0, 0.7 + k * 0.045, 1.67)
-  part(0.16, 0.05, 0.05, chrome, 0, 0.9, 1.68)
+  for (let k = 0; k < 4; k++) finish(part(0.7, 0.012, 0.045, chromeColor, 0, 0.7 + k * 0.045, 1.67), chrome)
+  finish(part(0.16, 0.05, 0.05, chromeColor, 0, 0.9, 1.68), chrome)
   part(0.36, 0.09, 0.02, 0xfafafa, 0, 0.58, 1.81)
   part(0.05, 0.09, 0.022, 0x2050c0, -0.155, 0.58, 1.811)
   part(0.36, 0.09, 0.02, 0xfafafa, 0, 0.6, -1.81)
@@ -2105,8 +2148,8 @@ function pandaParts(part, body, glass = 0x1f2a36, plastic = 0x2e2e2e, lights = n
     part(0.1, 0.05, 0.03, 0xf4f4f4, side * 0.52, 0.7, -1.675)
     part(0.02, 0.44, 0.94, frame, side * 0.705, 1.2, 0.18)
     part(0.02, 0.44, 0.98, frame, side * 0.705, 1.2, -0.92)
-    part(0.02, 0.38, 0.86, glass, side * 0.715, 1.2, 0.18)
-    part(0.02, 0.38, 0.9, glass, side * 0.715, 1.2, -0.92)
+    finish(part(0.02, 0.38, 0.86, glass, side * 0.715, 1.2, 0.18), carGlass)
+    finish(part(0.02, 0.38, 0.9, glass, side * 0.715, 1.2, -0.92), carGlass)
     part(0.02, 0.9, 0.012, frame, side * 0.735, 0.85, -0.42)
     part(0.02, 0.9, 0.012, frame, side * 0.735, 0.85, 0.72)
     part(0.02, 0.9, 0.012, frame, side * 0.735, 0.85, -1.42)
@@ -2114,18 +2157,18 @@ function pandaParts(part, body, glass = 0x1f2a36, plastic = 0x2e2e2e, lights = n
     part(0.03, 0.04, 0.14, 0x111111, side * 0.745, 0.92, -0.9)
     part(0.02, 0.05, 2.9, plastic, side * 0.74, 0.7, -0.1)
     part(0.06, 0.14, 0.1, plastic, side * 0.8, 1.06, 0.62)
-    part(0.02, 0.1, 0.08, 0xbfd6ea, side * 0.83, 1.07, 0.6)
+    finish(part(0.02, 0.1, 0.08, 0xbfd6ea, side * 0.83, 1.07, 0.6), chrome)
     part(0.06, 0.32, 0.76, plastic, side * 0.72, 0.36, 1.08)
     part(0.06, 0.32, 0.76, plastic, side * 0.72, 0.36, -1.08)
     part(0.02, 0.28, 0.02, frame, side * 0.62, 1.2, 0.72)
     part(0.02, 0.32, 0.02, frame, side * 0.62, 1.2, -1.42)
   }
   part(1.32, 0.48, 0.02, frame, 0, 1.2, -1.545)
-  part(1.24, 0.4, 0.02, glass, 0, 1.2, -1.555)
+  finish(part(1.24, 0.4, 0.02, glass, 0, 1.2, -1.555), carGlass)
   part(0.36, 0.012, 0.03, 0x111111, 0.3, 0.955, 0.98)
   part(0.36, 0.012, 0.03, 0x111111, -0.3, 0.955, 0.98)
   part(1.34, 0.54, 0.02, frame, 0, 1.17, 0.735).rotation.x = -0.4
-  part(1.26, 0.46, 0.02, glass, 0, 1.17, 0.745).rotation.x = -0.4
+  finish(part(1.26, 0.46, 0.02, glass, 0, 1.17, 0.745), carGlass).rotation.x = -0.4
   return shell
 }
 
@@ -2177,7 +2220,7 @@ function buildCar() {
     const wheel = new THREE.Group()
     wheel.rotation.order = 'YXZ'
     for (const [geometry, color] of [[tyre, 0x151515], [rim, 0xc9c9c9], [hub, 0x555555]]) {
-      const mesh = new THREE.Mesh(geometry, solid(color))
+      const mesh = new THREE.Mesh(geometry, color === 0xc9c9c9 ? chrome : solid(color))
       mesh.castShadow = true
       wheel.add(mesh)
     }
@@ -2591,7 +2634,7 @@ function killEffects(npc, reward = describe(npc.kind).reward) {
 const coinsEl = document.getElementById('coins')
 const coinFace = new THREE.TextureLoader().load('assets/gcoin.jpg')
 coinFace.colorSpace = THREE.SRGBColorSpace
-const coinMaterial = [new THREE.MeshToonMaterial({ color: 0xffc233, gradientMap: gradient }), new THREE.MeshToonMaterial({ map: coinFace, color: 0xffd35c, gradientMap: gradient }), new THREE.MeshToonMaterial({ map: coinFace, color: 0xffd35c, gradientMap: gradient })]
+const coinMaterial = [new THREE.MeshStandardMaterial({ color: 0xffc233, metalness: 1, roughness: 0.28 }), new THREE.MeshStandardMaterial({ map: coinFace, color: 0xffd35c, metalness: 0.9, roughness: 0.3 }), new THREE.MeshStandardMaterial({ map: coinFace, color: 0xffd35c, metalness: 0.9, roughness: 0.3 })]
 const coinGeometry = new THREE.CylinderGeometry(0.6, 0.6, 0.1, 24).rotateX(Math.PI / 2)
 const coins = []
 let score = 0
