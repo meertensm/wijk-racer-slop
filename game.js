@@ -1355,7 +1355,7 @@ function buildingExtras(building, groups) {
 // DETAIL TILES (kozijnen, goten, heggen, gras en bloemen rond de speler):
 
 const buildingTiles = new Map(), detailTiles = new Map()
-const DETAIL_REACH = 1, DETAIL_KEEP = 2, DETAIL_BATCH = 60
+const DETAIL_REACH = 1, DETAIL_KEEP = 2, DETAIL_BATCH = 12
 let detailJob = null, natureShapes = null
 
 function newGroups() {
@@ -1385,7 +1385,7 @@ function seeded(seed) {
   return () => (value = (value * 1664525 + 1013904223) >>> 0) / 4294967296
 }
 
-function tileNature(tx, tz) {
+function natureSampler(tx, tz) {
   if (!natureShapes) natureShapes = {
     tuft: mergeGeometries([[0, 0], [0.12, 0.05], [-0.1, 0.08], [0.04, -0.12], [-0.06, -0.06]].map(([dx, dz], i) => new THREE.ConeGeometry(0.07, 0.3 + (i % 2) * 0.15, 3).translate(dx, 0.15, dz))),
     bush: blobs([[0, 0.5, 0, 0.6], [0.4, 0.42, 0.2, 0.45], [-0.35, 0.45, -0.25, 0.48], [0.1, 0.8, -0.1, 0.4]]),
@@ -1394,39 +1394,53 @@ function tileNature(tx, tz) {
       new THREE.IcosahedronGeometry(0.06, 0).translate(dx, 0.32, dz)
     ]))
   }
-  const x0 = tx, z0 = tz, x1 = tx + SUB, z1 = tz + SUB
   const rand = seeded(Math.round(tx / SUB) * 73856093 ^ Math.round(tz / SUB) * 19349663)
   const tufts = [], bushes = [], flowers = [[], [], []]
-  const count = (x1 - x0) * (z1 - z0) / 40
-  for (let i = 0; i < count; i++) {
-    const x = x0 + rand() * (x1 - x0), z = z0 + rand() * (z1 - z0)
-    const kind = kindAt(x, z)
-    if (!['grass', 'forest', 'ground'].includes(kind) || wasteAt(x, z) || !treeFits(x, z)) continue
-    const place = [x, terrainHeight(x, z) - 0.03, z, 0.7 + rand() * 0.8, rand() * 6.28], roll = rand()
-    if (kind === 'forest' ? roll < 0.2 : roll < 0.04) bushes.push(place)
-    else if (roll < 0.1) flowers[Math.floor(rand() * 3)].push(place)
-    else tufts.push(place)
+  const count = SUB * SUB / 40
+  let sampled = 0
+  return {
+    step(limit) {
+      const end = Math.min(count, sampled + limit)
+      for (; sampled < end; sampled++) {
+        const x = tx + rand() * SUB, z = tz + rand() * SUB
+        const kind = kindAt(x, z)
+        if (!['grass', 'forest', 'ground'].includes(kind) || wasteAt(x, z) || !treeFits(x, z)) continue
+        const place = [x, terrainHeight(x, z) - 0.03, z, 0.7 + rand() * 0.8, rand() * 6.28], roll = rand()
+        if (kind === 'forest' ? roll < 0.2 : roll < 0.04) bushes.push(place)
+        else if (roll < 0.1) flowers[Math.floor(rand() * 3)].push(place)
+        else tufts.push(place)
+      }
+      return sampled >= count
+    },
+    meshes() {
+      const meshes = [
+        instances(natureShapes.tuft, 0xffffff, tufts, TEXTURES.foliage, 0.16, false, false),
+        instances(natureShapes.bush, 0xffffff, bushes, TEXTURES.foliage, 0.1, false),
+        ...[0xf2d24b, 0xe86aa5, 0xf6f6f2].map((color, i) => instances(natureShapes.flower, color, flowers[i], null, 0, false, false))
+      ].filter(Boolean)
+      meshes.forEach(mesh => { mesh.userData.instanced = true })
+      return meshes
+    }
   }
-  const meshes = [
-    instances(natureShapes.tuft, 0xffffff, tufts, TEXTURES.foliage, 0.16, false, false),
-    instances(natureShapes.bush, 0xffffff, bushes, TEXTURES.foliage, 0.1, false),
-    ...[0xf2d24b, 0xe86aa5, 0xf6f6f2].map((color, i) => instances(natureShapes.flower, color, flowers[i], null, 0, false, false))
-  ].filter(Boolean)
-  meshes.forEach(mesh => { mesh.userData.instanced = true })
-  return meshes
 }
 
 function startDetailTile(kx, kz) {
   const key = `${kx},${kz}`
   detailTiles.set(key, [])
-  detailJob = { key, tx: kx * SUB, tz: kz * SUB, buildings: buildingTiles.get(key) || [], index: 0, groups: newGroups() }
+  detailJob = { key, tx: kx * SUB, tz: kz * SUB, buildings: buildingTiles.get(key) || [], index: 0, groups: newGroups(), meshes: null, nature: null }
 }
 
 function advanceDetailJob(batch = DETAIL_BATCH) {
-  const job = detailJob, end = Math.min(job.buildings.length, job.index + batch)
-  for (; job.index < end; job.index++) buildingExtras(job.buildings[job.index], job.groups)
-  if (job.index < job.buildings.length) return
-  detailTiles.set(job.key, [...mergeGroups(job.groups), ...tileNature(job.tx, job.tz)])
+  const job = detailJob
+  if (job.index < job.buildings.length) {
+    const end = Math.min(job.buildings.length, job.index + batch)
+    for (; job.index < end; job.index++) buildingExtras(job.buildings[job.index], job.groups)
+    if (batch !== Infinity) return
+  }
+  if (!job.meshes) { job.meshes = mergeGroups(job.groups); if (batch !== Infinity) return }
+  job.nature ||= natureSampler(job.tx, job.tz)
+  if (!job.nature.step(batch === Infinity ? Infinity : 400)) return
+  detailTiles.set(job.key, [...job.meshes, ...job.nature.meshes()])
   detailJob = null
 }
 
@@ -1540,7 +1554,14 @@ async function fetchTile(tx, tz) {
   for (let attempt = 0; tiles.get(key) === tile; attempt++) {
     try {
       const response = await fetch(`tiles/${TILE_VERSION}/${tx}_${tz}.json`)
-      if (response.ok) return receiveTile(tile, await response.json())
+      if (response.ok) {
+        const text = await response.text(), started = performance.now(), data = JSON.parse(text)
+        if (performance.now() - started > 12) slowSteps.push(['parse', Math.round(performance.now() - started), key])
+        const before = performance.now()
+        receiveTile(tile, data)
+        if (performance.now() - before > 12) slowSteps.push(['receive', Math.round(performance.now() - before), key])
+        return
+      }
       if (response.status === 404) return receiveTile(tile, { outside: true })
       await sleep(response.status === 202 ? 2000 : Math.min(30000, 2000 * 2 ** attempt))
     } catch {
@@ -1696,9 +1717,16 @@ function pump(budget, filter) {
       if (score < bestScore) { bestScore = score; best = job }
     }
     if (!best) return
-    if (best.step()) { jobs.splice(jobs.indexOf(best), 1); best.tile.scheduled[best.kind] = false; planTile(best.tile) }
+    const started = performance.now()
+    const done = best.step()
+    const took = performance.now() - started
+    if (took > 12) slowSteps.push([best.kind, Math.round(took), best.tile.key])
+    if (done) { jobs.splice(jobs.indexOf(best), 1); best.tile.scheduled[best.kind] = false; planTile(best.tile) }
   }
 }
+
+const slowSteps = [], slowFrames = []
+let lastStepNote = ''
 
 function streamTiles() {
   const cx = Math.floor(state.x / TILE), cz = Math.floor(state.z / TILE)
@@ -3415,7 +3443,7 @@ function arrive() {
 travelList.addEventListener('click', event => { const item = event.target.closest('li'); if (item) travelTo(item.dataset.name) })
 
 const keys = new Set()
-window.debug = { keys, npcs, poops, others, detailTiles, tiles, jobs, asphaltCells, roadsById, signSlots, seams, tileAt, evictTile, streamTiles, travelTo, camera, scene, MATERIALS, respawn, unstick, applySnapshot, applyFrame, EVENTS, get socket() { return socket }, get myId() { return myId }, get engineSample() { return engineSample }, get screech() { return screech }, get hardstyleSampled() { return hardstyleSampled }, get explosion() { return explosion }, get audio() { return audio }, get metal() { return metal }, get state() { return state } }
+window.debug = { keys, npcs, poops, others, detailTiles, tiles, jobs, slowSteps, slowFrames, asphaltCells, roadsById, signSlots, seams, tileAt, evictTile, streamTiles, travelTo, camera, scene, MATERIALS, respawn, unstick, applySnapshot, applyFrame, EVENTS, get socket() { return socket }, get myId() { return myId }, get engineSample() { return engineSample }, get screech() { return screech }, get hardstyleSampled() { return hardstyleSampled }, get explosion() { return explosion }, get audio() { return audio }, get metal() { return metal }, get state() { return state } }
 addEventListener('keydown', event => {
   if (event.code === 'Escape' && !travel.hidden) return toggleTravel(false)
   if (event.code === 'Escape' && !/INPUT|TEXTAREA/.test(event.target.tagName)) return toggleBigMap()
@@ -3554,12 +3582,18 @@ function step(dt, now) {
     streetEl.textContent = streetName(state.x, state.z)
   }
   streamTimer -= dt
-  if (streamTimer <= 0) { streamTimer = 0.25; streamTiles() }
+  if (streamTimer <= 0) { streamTimer = 0.25; const t = performance.now(); streamTiles(); if (performance.now() - t > 12) slowSteps.push(['stream', Math.round(performance.now() - t), '']) }
+  const marks = [performance.now()]
   pump(5)
+  marks.push(performance.now())
   collectGarbage(12)
+  marks.push(performance.now())
   uploadSigns(now)
+  marks.push(performance.now())
   streamAsphalt()
   streamDetails()
+  marks.push(performance.now())
+  lastStepNote = marks.slice(1).map((m, i) => Math.round(m - marks[i])).join('/')
   if (state.travel) arrive()
   const here = tileAt(state.x, state.z)
   const waiting = !here || here.status === 'fetching' || here.status === 'data' || here.status === 'failed' || state.travel
@@ -3598,8 +3632,12 @@ function snapshot() {
 function frame(now) {
   const dt = Math.min((now - last) / 1000, 0.05)
   last = now
+  const t0 = performance.now()
   step(dt, now)
+  const t1 = performance.now()
   effect.render(scene, camera)
+  const t2 = performance.now()
+  if (t2 - t0 > 30) slowFrames.push([Math.round(t1 - t0), Math.round(t2 - t1), lastStepNote])
   if (now > snapshotAt && Math.abs(state.speed) > 5) { snapshotAt = now + 45000; snapshot() }
   requestAnimationFrame(frame)
 }
