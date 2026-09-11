@@ -62,6 +62,7 @@ const COLORS = {
   walls:      [0x9c5a45, 0x6e4636, 0xc9b48a, 0xe8e4da, 0xb8b4ac, 0xa8705a, 0x7a3b2e, 0xd9cdb8, 0x5b4b45, 0xc2a27a, 0xf1ece0, 0x8d6a52].map(hex => new THREE.Color(hex)),
   roofs:      [0x4a3a36, 0x6b3b2f, 0x3e3e44, 0x5a4034, 0x4a4a52, 0x703a30, 0x2f2f33, 0x8a4a3a, 0x555049, 0x3a2e2a, 0x6a5a4a, 0x46403c].map(hex => new THREE.Color(hex)),
   glass:      new THREE.Color(0x26323f),
+  hedge:      new THREE.Color(0x4f8a3a),
   frame:      new THREE.Color(0xf4f2ea),
   door:       new THREE.Color(0x3b2a1e),
   chimney:    new THREE.Color(0x6b4a3a),
@@ -1049,10 +1050,12 @@ function cellBox(kx, kz, margin) {
 }
 
 function cellReady(kx, kz) {
+  const centre = tileAt((kx + 0.5) * SUB, (kz + 0.5) * SUB)
+  if (!centre || centre.status !== 'ready') return false
   const [x0, z0, x1, z1] = cellBox(kx, kz, 9)
   for (const x of [x0, x1]) for (const z of [z0, z1]) {
     const tile = tileAt(x, z)
-    if (!tile || (tile.status !== 'ready' && tile.status !== 'empty')) return false
+    if (!tile || !(tile.raw || tile.status === 'empty')) return false
   }
   return true
 }
@@ -1171,6 +1174,32 @@ function quadInto(acc, cx, cz, ux, uz, nx, nz, width, bottom, height, color, cel
   }
 }
 
+function boxes(groups, name) {
+  groups.acc ||= {}
+  return groups.acc[name] ||= { positions: [], normals: [], colors: [] }
+}
+
+function boxInto(acc, w, h, d, rotation, x, y, z, color) {
+  const cos = Math.cos(rotation), sin = Math.sin(rotation)
+  const corner = (sx, sy, sz) => { const lx = sx * w / 2, lz = sz * d / 2; return [x + lx * cos + lz * sin, y + sy * h / 2, z - lx * sin + lz * cos] }
+  const turn = (nx, nz) => [nx * cos + nz * sin, 0, -nx * sin + nz * cos]
+  const faces = [
+    [[1, 1, 1], [1, 1, -1], [1, -1, -1], [1, -1, 1], turn(1, 0)],
+    [[-1, 1, -1], [-1, 1, 1], [-1, -1, 1], [-1, -1, -1], turn(-1, 0)],
+    [[-1, 1, 1], [1, 1, 1], [1, 1, -1], [-1, 1, -1], [0, 1, 0]],
+    [[-1, -1, -1], [1, -1, -1], [1, -1, 1], [-1, -1, 1], [0, -1, 0]],
+    [[-1, 1, 1], [-1, -1, 1], [1, -1, 1], [1, 1, 1], turn(0, 1)],
+    [[1, 1, -1], [1, -1, -1], [-1, -1, -1], [-1, 1, -1], turn(0, -1)]
+  ]
+  faces.forEach(([a, b, c, d, normal]) => {
+    const [pa, pb, pc, pd] = [a, b, c, d].map(k => corner(...k))
+    const ux = pb[0] - pa[0], uy = pb[1] - pa[1], uz = pb[2] - pa[2], vx = pc[0] - pa[0], vy = pc[1] - pa[1], vz = pc[2] - pa[2]
+    const dot = (uy * vz - uz * vy) * normal[0] + (uz * vx - ux * vz) * normal[1] + (ux * vy - uy * vx) * normal[2]
+    const order = dot >= 0 ? [pa, pb, pc, pa, pc, pd] : [pa, pd, pc, pa, pc, pb]
+    order.forEach(point => { acc.positions.push(...point); acc.normals.push(...normal); acc.colors.push(color.r, color.g, color.b) })
+  })
+}
+
 function flush(acc) {
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(acc.positions, 3))
@@ -1221,17 +1250,17 @@ function hipRoof(building, groups) {
 function roofExtras(building, groups) {
   const { angle, cos, sin, minX, maxX, minZ, maxZ, inset, rise, midZ, top, back, A, B, C, D, R1, R2 } = building.roofFrame
   const ridge = Math.hypot(R2[0] - R1[0], R2[2] - R1[2])
-  groups.plain.push(paint(new THREE.BoxGeometry(ridge + 0.3, 0.16, 0.34).rotateY(-angle).translate((R1[0] + R2[0]) / 2, top + rise + 0.04, (R1[2] + R2[2]) / 2), COLORS.roofs[building.c].clone().multiplyScalar(0.7)))
-  for (const [P, Q] of [[A, B], [C, D]]) groups.plain.push(paint(new THREE.BoxGeometry(Math.hypot(Q[0] - P[0], Q[2] - P[2]), 0.2, 0.08).rotateY(-angle).translate((P[0] + Q[0]) / 2, top - 0.1, (P[2] + Q[2]) / 2), COLORS.frame))
+  boxInto(boxes(groups, 'plain'), ridge + 0.3, 0.16, 0.34, -angle, (R1[0] + R2[0]) / 2, top + rise + 0.04, (R1[2] + R2[2]) / 2, COLORS.roofs[building.c].clone().multiplyScalar(0.7))
+  for (const [P, Q] of [[A, B], [C, D]]) boxInto(boxes(groups, 'plain'), Math.hypot(Q[0] - P[0], Q[2] - P[2]), 0.2, 0.08, -angle, (P[0] + Q[0]) / 2, top - 0.1, (P[2] + Q[2]) / 2, COLORS.frame)
   if (maxX - minX > 9 && rise > 1.8 && Math.abs(Math.floor(minX * 7)) % 2 === 0) {
     const [dx, , dz] = back([(minX + maxX) / 2, minZ + (maxZ - minZ) * 0.24, 0]), dy = top + rise * 0.32
-    groups.plain.push(paint(new THREE.BoxGeometry(1.5, 1.1, 1.3).rotateY(-angle).translate(dx, dy + 0.55, dz), COLORS.plaster[0]))
-    groups.plain.push(paint(new THREE.BoxGeometry(1.7, 0.12, 1.5).rotateY(-angle).translate(dx, dy + 1.12, dz), COLORS.roofs[building.c]))
-    groups.plain.push(paint(new THREE.BoxGeometry(0.9, 0.7, 0.06).rotateY(-angle).translate(dx + 0.67 * sin, dy + 0.55, dz - 0.67 * cos), COLORS.glass))
+    boxInto(boxes(groups, 'plain'), 1.5, 1.1, 1.3, -angle, dx, dy + 0.55, dz, COLORS.plaster[0])
+    boxInto(boxes(groups, 'plain'), 1.7, 0.12, 1.5, -angle, dx, dy + 1.12, dz, COLORS.roofs[building.c])
+    boxInto(boxes(groups, 'plain'), 0.9, 0.7, 0.06, -angle, dx + 0.67 * sin, dy + 0.55, dz - 0.67 * cos, COLORS.glass)
   }
   if (maxX - minX > 12 && Math.abs(Math.floor(maxZ * 5)) % 3 === 0) {
     const [x2, , z2] = back([maxX - inset - (maxX - minX - 2 * inset) * 0.2, midZ, 0])
-    groups.plain.push(paint(new THREE.BoxGeometry(0.5, rise + 0.6, 0.5).translate(x2, top + (rise + 0.6) / 2, z2), COLORS.chimney))
+    boxInto(boxes(groups, 'plain'), 0.5, rise + 0.6, 0.5, 0, x2, top + (rise + 0.6) / 2, z2, COLORS.chimney)
   }
 }
 
@@ -1244,16 +1273,16 @@ function facadeDetails(building, groups, detail) {
   const opening = (cx, cz, ux, uz, nx, nz, width, bottom, height, cell) => {
     if (!detail) return quadInto(acc, cx, cz, ux, uz, nx, nz, width, bottom, height, white, cell)
     const rotation = Math.atan2(-uz, ux), ox = cx + nx * 0.07, oz = cz + nz * 0.07
-    const bar = (w, h, along, up, color = COLORS.frame) => groups.plain.push(paint(new THREE.BoxGeometry(w, h, 0.1).rotateY(rotation).translate(ox + ux * along, bottom + up, oz + uz * along), color))
+    const bar = (w, h, along, up, color = COLORS.frame) => boxInto(boxes(groups, 'plain'), w, h, 0.1, rotation, ox + ux * along, bottom + up, oz + uz * along, color)
     bar(width + 0.16, 0.08, 0, height + 0.04)
     bar(0.08, height + 0.16, -(width / 2 + 0.04), height / 2)
     bar(0.08, height + 0.16, width / 2 + 0.04, height / 2)
     if (cell === 0) {
       bar(width + 0.16, 0.08, 0, -0.04)
-      groups.plain.push(paint(new THREE.BoxGeometry(width + 0.24, 0.07, 0.22).rotateY(rotation).translate(cx + nx * 0.11, bottom - 0.1, cz + nz * 0.11), COLORS.curb))
+      boxInto(boxes(groups, 'plain'), width + 0.24, 0.07, 0.22, rotation, cx + nx * 0.11, bottom - 0.1, cz + nz * 0.11, COLORS.curb)
     } else {
-      groups.plain.push(paint(new THREE.BoxGeometry(width + 0.5, 0.14, 0.7).rotateY(rotation).translate(cx + nx * 0.35, bottom - 0.07, cz + nz * 0.35), COLORS.curb))
-      groups.plain.push(paint(new THREE.BoxGeometry(width + 0.6, 0.08, 0.7).rotateY(rotation).translate(cx + nx * 0.35, bottom + height + 0.1, cz + nz * 0.35), COLORS.gutter))
+      boxInto(boxes(groups, 'plain'), width + 0.5, 0.14, 0.7, rotation, cx + nx * 0.35, bottom - 0.07, cz + nz * 0.35, COLORS.curb)
+      boxInto(boxes(groups, 'plain'), width + 0.6, 0.08, 0.7, rotation, cx + nx * 0.35, bottom + height + 0.1, cz + nz * 0.35, COLORS.gutter)
     }
   }
   points.forEach(([ax, az], i) => {
@@ -1285,15 +1314,15 @@ function facadeDetails(building, groups, detail) {
     if (i === front && building.h >= 3 && length >= 4.5 && !brand) {
       const [dx, dz] = at(1.1), ground = terrainHeight(dx, dz)
       opening(dx, dz, ux, uz, nx, nz, 1.0, ground, 2.2 + building.base - ground, 1)
-      if (detail) for (const along of [0.25, length - 0.25]) groups.plain.push(paint(new THREE.CylinderGeometry(0.05, 0.05, building.h - 0.3, 6).translate(ax + ux * along + nx * 0.12, building.base + building.h / 2 - 0.15, az + uz * along + nz * 0.12), COLORS.gutter))
+      if (detail) for (const along of [0.25, length - 0.25]) boxInto(boxes(groups, 'plain'), 0.1, building.h - 0.3, 0.1, 0, ax + ux * along + nx * 0.12, building.base + building.h / 2 - 0.15, az + uz * along + nz * 0.12, COLORS.gutter)
       if (detail) {
         const setback = [4.5, 3.5, 2.5].find(dist => { const hx = mx + nx * dist, hz = mz + nz * dist; return !blocked(hx, hz) && roadDistance(hx, hz) > 2.8 && ['grass', 'ground', 'forest'].includes(kindAt(hx, hz)) })
         if (setback) {
           const rotation = Math.atan2(-uz, ux), hy = terrainHeight(mx + nx * setback, mz + nz * setback)
-          const hedge = (from, to) => to - from > 0.6 && groups.hedge.push(paint(new THREE.BoxGeometry(to - from, 0.9, 0.6).rotateY(rotation).translate(ax + ux * (from + to) / 2 + nx * setback, hy + 0.45, az + uz * (from + to) / 2 + nz * setback), new THREE.Color(0x4f8a3a)))
+          const hedge = (from, to) => to - from > 0.6 && boxInto(boxes(groups, 'hedge'), to - from, 0.9, 0.6, rotation, ax + ux * (from + to) / 2 + nx * setback, hy + 0.45, az + uz * (from + to) / 2 + nz * setback, COLORS.hedge)
           hedge(0.2, 0.5)
           hedge(1.7, length - 0.2)
-          groups.paving.push(paint(new THREE.BoxGeometry(1.0, 0.06, setback).rotateY(rotation).translate(dx + nx * setback / 2, building.base + 0.03, dz + nz * setback / 2), COLORS.sidewalk))
+          boxInto(boxes(groups, 'paving'), 1.0, 0.06, setback, rotation, dx + nx * setback / 2, building.base + 0.03, dz + nz * setback / 2, COLORS.sidewalk)
         }
       }
       const start = 2.1, end = length - 0.7
@@ -1343,11 +1372,11 @@ function buildBuilding(building, groups) {
 function buildingExtras(building, groups) {
   const plinth = new THREE.Shape(offsetRing(building.p, 0.06).map(([x, z]) => new THREE.Vector2(x, -z)))
   groups.plain.push(paint(new THREE.ExtrudeGeometry(plinth, { depth: building.base - building.bottom + 0.45, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, building.bottom, 0), COLORS.plinth))
-  gutters(building, groups.plain)
+  gutters(building, boxes(groups, 'plain'))
   if (building.roofFrame) roofExtras(building, groups)
   else if (footprintArea(building.p) > 60) {
     const [cx, cz] = centroid(building.p)
-    groups.plain.push(paint(new THREE.BoxGeometry(1.4, 0.9, 1.1).translate(cx, building.base + building.h + 0.45, cz), COLORS.concrete))
+    boxInto(boxes(groups, 'plain'), 1.4, 0.9, 1.1, 0, cx, building.base + building.h + 0.45, cz, COLORS.concrete)
   }
   facadeDetails(building, groups, true)
 }
@@ -1364,6 +1393,7 @@ function newGroups() {
 
 function mergeGroups(groups) {
   const meshes = []
+  if (groups.acc) { Object.entries(groups.acc).forEach(([name, acc]) => { if (acc.positions.length) groups[name].push(flush(acc)) }); delete groups.acc }
   for (const [name, parts] of Object.entries(groups)) {
     if (!parts.length) continue
     const geometries = parts.map(part => {
@@ -1493,7 +1523,7 @@ function footprintArea(points) {
   return Math.abs(area) / 2
 }
 
-function gutters(building, parts) {
+function gutters(building, acc) {
   const top = building.base + building.h
   building.p.forEach(([ax, az], i) => {
     const [bx, bz] = building.p[(i + 1) % building.p.length]
@@ -1502,7 +1532,7 @@ function gutters(building, parts) {
     const ux = (bx - ax) / length, uz = (bz - az) / length
     let nx = uz, nz = -ux
     if (inside(building.p, (ax + bx) / 2 + nx * 0.3, (az + bz) / 2 + nz * 0.3)) { nx = -nx; nz = -nz }
-    parts.push(paint(new THREE.BoxGeometry(length, 0.14, 0.14).rotateY(Math.atan2(-uz, ux)).translate((ax + bx) / 2 + nx * 0.09, top - 0.07, (az + bz) / 2 + nz * 0.09), COLORS.gutter))
+    boxInto(acc, length, 0.14, 0.14, Math.atan2(-uz, ux), (ax + bx) / 2 + nx * 0.09, top - 0.07, (az + bz) / 2 + nz * 0.09, COLORS.gutter)
   })
 }
 
@@ -3423,6 +3453,8 @@ function arrive() {
   const here = tileAt(state.x, state.z)
   loadingBar.style.width = `${!here ? 15 : here.status === 'fetching' ? 25 : here.status === 'data' ? 45 : here.built.prepare ? 90 : 70}%`
   if (!here || here.status !== 'ready' || !here.built.prepare || performance.now() - state.travel.since < 1500) return
+  const cellKeyHere = subKey(state.x, state.z), asphalt = asphaltCells.get(cellKeyHere)
+  if (roadCells.has(cellKeyHere) && !(asphalt && asphalt.meshes.length) && performance.now() - state.travel.since < 20000) return
   const { segment, distance, t } = nearestSegment(state.x, state.z, 6)
   if (segment && distance < 250) {
     state.x = segment.a[0] + (segment.b[0] - segment.a[0]) * t
