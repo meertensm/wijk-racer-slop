@@ -1059,8 +1059,7 @@ let workerTurn = 0
 roadWorkers.forEach(worker => { worker.onmessage = ({ data }) => {
   const cell = asphaltCells.get(data.key), pending = pendingCells.get(data.key)
   pendingCells.delete(data.key)
-  if (data.error) console.warn('road polygons failed for cell', data.key, data.error)
-  else if (cell && cell.gen === data.gen && cell.tile && cell.tile.status !== 'evicted') schedule(`asphalt:${data.key}`, cell.tile, 3, placeAsphaltStep(cell, data))
+  if (cell && cell.gen === data.gen && cell.tile && cell.tile.status !== 'evicted') schedule(`asphalt:${data.key}`, cell.tile, 3, placeAsphaltStep(cell, data))
   if (pending) pending.resolve()
 } })
 
