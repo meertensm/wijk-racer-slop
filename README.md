@@ -11,7 +11,7 @@ GTA-achtig racen in een cartoonversie van Limburg, gebouwd uit echte kaartdata. 
 ## Starten
 
 ```bash
-bin/serve            # http://localhost:8765, start op Urmond
+bin/serve            # http://localhost:8765, start in Urmond
 bin/serve 8765 "Markt 1, Sittard"
 ```
 
